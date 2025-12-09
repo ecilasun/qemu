@@ -144,4 +144,6 @@ endif
 
 system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_lcdc.c'))
 
+system_ss.add(when: 'CONFIG_SIMPLE_FRAMEBUFFER', if_true: files('simple-framebuffer.c'))
+
 modules += { 'hw-display': hw_display_modules }

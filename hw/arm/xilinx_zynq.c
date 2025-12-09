@@ -445,6 +445,15 @@ static void zynq_init(MachineState *machine)
     create_unimplemented_device("zynq.qos301_dmac", 0xF8947000, 0x130);
     create_unimplemented_device("zynq.qos301_iou", 0xF8948000, 0x130);
 
+    /* Simple framebuffer for display output */
+    dev = qdev_new("simple-framebuffer");
+    qdev_prop_set_uint64(dev, "base", 0x18000000);
+    qdev_prop_set_uint32(dev, "width", 640);
+    qdev_prop_set_uint32(dev, "height", 480);
+    qdev_prop_set_uint32(dev, "stride", 640 * 2);
+    qdev_prop_set_string(dev, "format", "r5g6b5");
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+
     zynq_binfo.ram_size = machine->ram_size;
     zynq_binfo.board_id = 0xd32;
     zynq_binfo.loader_start = 0;
