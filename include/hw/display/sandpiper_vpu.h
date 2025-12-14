@@ -39,6 +39,9 @@ typedef struct SandpiperVPUState {
     int fifo_head;
     int fifo_tail;
     int fifo_count;
+
+    uint32_t shift_scanout;
+    uint32_t shift_pixel;
 } SandpiperVPUState;
 
 #define TYPE_SANDPIPER_VCP "sandpiper-vcp"

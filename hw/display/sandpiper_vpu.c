@@ -136,9 +136,13 @@ static void sandpiper_vpu_process_commands(SandpiperVPUState *s)
             case CMD_SETSECONDBUFFER:
                 s->second_buffer = cmd_word;
                 break;
-            case CMD_SHIFTCACHE:
             case CMD_SHIFTSCANOUT:
+                s->shift_scanout = cmd_word;
+                break;
             case CMD_SHIFTPIXEL:
+                s->shift_pixel = cmd_word;
+                break;
+            case CMD_SHIFTCACHE:
                 /* Ignored for now */
                 break;
             default:
@@ -252,8 +256,10 @@ static void sandpiper_vpu_update_display(void *opaque)
     dest = (uint32_t *)surface_data(surface);
     stride = surface_stride(surface) / 4;
 
+    uint32_t offset = ((s->shift_scanout * 16) + s->shift_pixel) * (bpp / 8);
+
     if (bpp == 8) {
-        src = (uint8_t *)vram_ptr;
+        src = (uint8_t *)vram_ptr + offset;
         uint32_t *palette = s->palette ? s->palette->palette : NULL;
 
         for (y = 0; y < height; y++) {
@@ -269,7 +275,7 @@ static void sandpiper_vpu_update_display(void *opaque)
         }
     } else {
         /* 16bpp (RGB565) */
-        src16 = (uint16_t *)vram_ptr;
+        src16 = (uint16_t *)((uint8_t *)vram_ptr + offset);
         for (y = 0; y < height; y++) {
             for (x = 0; x < width; x++) {
                 uint16_t pixel = src16[y * width + x];
@@ -381,6 +387,8 @@ static void sandpiper_vpu_reset(DeviceState *dev)
     s->fifo_head = 0;
     s->fifo_tail = 0;
     s->fifo_count = 0;
+    s->shift_scanout = 0;
+    s->shift_pixel = 0;
     timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME));
 }
 
