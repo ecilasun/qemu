@@ -126,6 +126,7 @@ static void sandpiper_vpu_update_display(void *opaque)
     MemoryRegion *mr;
     void *vram_ptr;
     hwaddr len;
+    int src_stride;
 
     if (!(s->mode_flags & VMODE_SCAN_ENABLE)) {
         return;
@@ -134,6 +135,12 @@ static void sandpiper_vpu_update_display(void *opaque)
     width = (s->mode_flags & VMODE_WIDTH_640) ? 640 : 320;
     height = (s->mode_flags & VMODE_WIDTH_640) ? 480 : 240;
     bpp = (s->mode_flags & VMODE_DEPTH_16BPP) ? 16 : 8;
+
+    if (width == 320 && bpp == 8) {
+        src_stride = 384;
+    } else {
+        src_stride = width * (bpp / 8);
+    }
 
     /* Check if surface needs resizing */
     if (surface_width(surface) != width || surface_height(surface) != height) {
@@ -149,7 +156,7 @@ static void sandpiper_vpu_update_display(void *opaque)
     /* Get pointer to guest RAM */
     /* Note: This is a simplification. Real hardware does DMA. 
        We assume the framebuffer is in the main system RAM. */
-    len = width * height * (bpp / 8);
+    len = src_stride * height;
     mr = address_space_translate(&address_space_memory, vpage_phys, &vpage_phys, &len, false, MEMTXATTRS_UNSPECIFIED);
     if (!mr || !memory_region_is_ram(mr)) {
         return;
@@ -168,7 +175,7 @@ static void sandpiper_vpu_update_display(void *opaque)
 
         for (y = 0; y < height; y++) {
             for (x = 0; x < width; x++) {
-                uint8_t idx = src[y * width + x];
+                uint8_t idx = src[y * src_stride + x];
                 if (palette) {
                     /* Palette format 0x00RRGGBB -> QEMU 0x00RRGGBB */
                     dest[y * stride + x] = palette[idx];
