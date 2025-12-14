@@ -135,7 +135,7 @@ if have_system
     'test-base64': [],
     'test-bufferiszero': [],
     'test-smp-parse': [qom, meson.project_source_root() / 'hw/core/machine-smp.c'],
-    'test-vmstate': [migration, io],
+    'test-vmstate': [migration, io, block],
     'test-yank': ['socket-helpers.c', qom, io, chardev]
   }
   if config_host_data.get('CONFIG_INOTIFY1')
