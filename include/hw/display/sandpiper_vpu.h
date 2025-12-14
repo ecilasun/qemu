@@ -34,6 +34,11 @@ typedef struct SandpiperVPUState {
     QEMUTimer *vsync_timer;
     bool vblank_toggle;
     bool swap_pending;
+
+    uint32_t fifo[1024];
+    int fifo_head;
+    int fifo_tail;
+    int fifo_count;
 } SandpiperVPUState;
 
 #define TYPE_SANDPIPER_VCP "sandpiper-vcp"

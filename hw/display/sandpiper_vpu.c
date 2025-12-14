@@ -112,6 +112,69 @@ static const TypeInfo sandpiper_palette_info = {
 
 /* VPU Module */
 
+static void sandpiper_vpu_process_commands(SandpiperVPUState *s)
+{
+    while (s->fifo_count > 0) {
+        if (s->swap_pending) {
+            /* Stall processing until VSYNC */
+            break;
+        }
+
+        uint32_t cmd_word = s->fifo[s->fifo_tail];
+        s->fifo_tail = (s->fifo_tail + 1) % 1024;
+        s->fifo_count--;
+
+        /* If we are expecting a parameter, consume it */
+        if (s->cmd_pending) {
+            switch (s->pending_cmd_opcode) {
+            case CMD_SETVPAGE:
+                s->vpage = cmd_word;
+                break;
+            case CMD_VMODE:
+                s->mode_flags = cmd_word;
+                break;
+            case CMD_SETSECONDBUFFER:
+                s->second_buffer = cmd_word;
+                break;
+            case CMD_SHIFTCACHE:
+            case CMD_SHIFTSCANOUT:
+            case CMD_SHIFTPIXEL:
+                /* Ignored for now */
+                break;
+            default:
+                break;
+            }
+            s->cmd_pending = false;
+            continue;
+        }
+
+        /* New Command */
+        uint8_t opcode = cmd_word & 0xFF;
+        
+        switch (opcode) {
+        case CMD_SETVPAGE:
+        case CMD_VMODE:
+        case CMD_SETSECONDBUFFER:
+        case CMD_SHIFTCACHE:
+        case CMD_SHIFTSCANOUT:
+        case CMD_SHIFTPIXEL:
+            s->pending_cmd_opcode = opcode;
+            s->cmd_pending = true;
+            break;
+        case CMD_SYNCSWAP:
+            /* Swap buffers at next VBLANK */
+            s->swap_pending = true;
+            break;
+        case CMD_WCONTROLREG:
+            /* Handle control reg */
+            break;
+        case CMD_FINALIZE:
+        default:
+            break;
+        }
+    }
+}
+
 static void sandpiper_vpu_vsync_timer_cb(void *opaque)
 {
     SandpiperVPUState *s = SANDPIPER_VPU(opaque);
@@ -124,6 +187,9 @@ static void sandpiper_vpu_vsync_timer_cb(void *opaque)
         s->second_buffer = tmp;
         s->swap_pending = false;
     }
+
+    /* Resume processing commands (e.g. barrier) */
+    sandpiper_vpu_process_commands(s);
 
     timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME) + NANOSECONDS_PER_SECOND / 60);
 }
@@ -240,8 +306,12 @@ static uint64_t sandpiper_vpu_read(void *opaque, hwaddr offset,
     if (offset == 0) {
         /* Status Register */
         /* Bit 0: blanktoggle (toggle every vsync) */
-        /* Bit 11: !FIFO_EMPTY - always 0 (empty) since we process immediately */
-        return s->vblank_toggle; 
+        /* Bit 11: !FIFO_EMPTY - 1 if FIFO is NOT empty */
+        uint32_t status = s->vblank_toggle;
+        if (s->fifo_count > 0) {
+            status |= (1 << 11);
+        }
+        return status; 
     }
     return 0;
 }
@@ -252,54 +322,15 @@ static void sandpiper_vpu_write(void *opaque, hwaddr offset,
     SandpiperVPUState *s = SANDPIPER_VPU(opaque);
     uint32_t cmd_word = (uint32_t)value;
 
-    /* If we are expecting a parameter, consume it */
-    if (s->cmd_pending) {
-        switch (s->pending_cmd_opcode) {
-        case CMD_SETVPAGE:
-            s->vpage = cmd_word;
-            break;
-        case CMD_VMODE:
-            s->mode_flags = cmd_word;
-            break;
-        case CMD_SETSECONDBUFFER:
-            s->second_buffer = cmd_word;
-            break;
-        case CMD_SHIFTCACHE:
-        case CMD_SHIFTSCANOUT:
-        case CMD_SHIFTPIXEL:
-            /* Ignored for now */
-            break;
-        default:
-            break;
-        }
-        s->cmd_pending = false;
-        return;
+    if (s->fifo_count < 1024) {
+        s->fifo[s->fifo_head] = cmd_word;
+        s->fifo_head = (s->fifo_head + 1) % 1024;
+        s->fifo_count++;
+    } else {
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: FIFO Overflow\n", __func__);
     }
 
-    /* New Command */
-    uint8_t opcode = cmd_word & 0xFF;
-    
-    switch (opcode) {
-    case CMD_SETVPAGE:
-    case CMD_VMODE:
-    case CMD_SETSECONDBUFFER:
-    case CMD_SHIFTCACHE:
-    case CMD_SHIFTSCANOUT:
-    case CMD_SHIFTPIXEL:
-        s->pending_cmd_opcode = opcode;
-        s->cmd_pending = true;
-        break;
-    case CMD_SYNCSWAP:
-        /* Swap buffers at next VBLANK */
-        s->swap_pending = true;
-        break;
-    case CMD_WCONTROLREG:
-        /* Handle control reg */
-        break;
-    case CMD_FINALIZE:
-    default:
-        break;
-    }
+    sandpiper_vpu_process_commands(s);
 }
 
 static const MemoryRegionOps sandpiper_vpu_ops = {
@@ -347,6 +378,9 @@ static void sandpiper_vpu_reset(DeviceState *dev)
     s->pending_cmd_opcode = 0;
     s->vblank_toggle = false;
     s->swap_pending = false;
+    s->fifo_head = 0;
+    s->fifo_tail = 0;
+    s->fifo_count = 0;
     timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME));
 }
 
