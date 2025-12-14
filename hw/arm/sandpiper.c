@@ -44,6 +44,7 @@
 #include "target/arm/cpu-qom.h"
 #include "qapi/visitor.h"
 #include "hw/display/sandpiper_vpu.h"
+#include "hw/display/sandpiper_vcp.h"
 #include "hw/audio/sandpiper_apu.h"
 
 #define TYPE_SANDPIPER_MACHINE MACHINE_TYPE_NAME("sandpiper")
@@ -478,6 +479,10 @@ static void sandpiper_init(MachineState *machine)
         vcp_dev = qdev_new(TYPE_SANDPIPER_VCP);
         sysbus_realize_and_unref(SYS_BUS_DEVICE(vcp_dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(vcp_dev), 0, 0x40003000);
+
+        /* Link VCP and VPU */
+        SANDPIPER_VPU(vpu_dev)->vcp = SANDPIPER_VCP(vcp_dev);
+        sandpiper_vcp_set_vpu(SANDPIPER_VCP(vcp_dev), SANDPIPER_VPU(vpu_dev));
     }
 
     zynq_binfo.ram_size = machine->ram_size;

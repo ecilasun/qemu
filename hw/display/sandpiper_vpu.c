@@ -28,6 +28,7 @@
 #include "qemu/timer.h"
 #include "hw/sysbus.h"
 #include "hw/display/sandpiper_vpu.h"
+#include "hw/display/sandpiper_vcp.h"
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
 #include "migration/vmstate.h"
@@ -205,7 +206,9 @@ static void sandpiper_vpu_update_display(void *opaque)
     uint32_t *dest;
     uint8_t *src;
     uint16_t *src16;
-    int width, height;
+    int fb_width, fb_height;
+    int scan_width = 640;
+    int scan_height = 480;
     int bpp;
     int stride;
     int y, x;
@@ -219,19 +222,20 @@ static void sandpiper_vpu_update_display(void *opaque)
         return;
     }
 
-    width = (s->mode_flags & VMODE_WIDTH_640) ? 640 : 320;
-    height = (s->mode_flags & VMODE_SCAN_DOUBLE) ? 240 : 480;
+    fb_width = (s->mode_flags & VMODE_WIDTH_640) ? 640 : 320;
+    fb_height = (s->mode_flags & VMODE_SCAN_DOUBLE) ? 240 : 480;
+
     bpp = (s->mode_flags & VMODE_DEPTH_16BPP) ? 16 : 8;
 
-    if (width == 320 && bpp == 8) {
+    if (fb_width == 320 && bpp == 8) {
         src_stride = 384;
     } else {
-        src_stride = width * (bpp / 8);
+        src_stride = fb_width * (bpp / 8);
     }
 
     /* Check if surface needs resizing */
-    if (surface_width(surface) != width || surface_height(surface) != height) {
-        qemu_console_resize(s->con, width, height);
+    if (surface_width(surface) != scan_width || surface_height(surface) != scan_height) {
+        qemu_console_resize(s->con, scan_width, scan_height);
         surface = qemu_console_surface(s->con);
     }
 
@@ -243,7 +247,7 @@ static void sandpiper_vpu_update_display(void *opaque)
     /* Get pointer to guest RAM */
     /* Note: This is a simplification. Real hardware does DMA. 
        We assume the framebuffer is in the main system RAM. */
-    len = src_stride * height;
+    len = src_stride * fb_height;
     mr = address_space_translate(&address_space_memory, vpage_phys, &vpage_phys, &len, false, MEMTXATTRS_UNSPECIFIED);
     if (!mr || !memory_region_is_ram(mr)) {
         return;
@@ -262,9 +266,14 @@ static void sandpiper_vpu_update_display(void *opaque)
         src = (uint8_t *)vram_ptr + offset;
         uint32_t *palette = s->palette ? s->palette->palette : NULL;
 
-        for (y = 0; y < height; y++) {
-            for (x = 0; x < width; x++) {
-                uint8_t idx = src[y * src_stride + x];
+        for (y = 0; y < scan_height; y++) {
+            int fb_y = (s->mode_flags & VMODE_SCAN_DOUBLE) ? y >> 1 : y;
+            for (x = 0; x < scan_width; x++) {
+                if (s->vcp) {
+                    sandpiper_vcp_run(s->vcp, y, x);
+                }
+                int fb_x = (s->mode_flags & VMODE_WIDTH_640) ? x : x >> 1;
+                uint8_t idx = src[fb_y * src_stride + fb_x];
                 if (palette) {
                     /* Palette format 0x00RRGGBB -> QEMU 0x00RRGGBB */
                     dest[y * stride + x] = palette[idx];
@@ -272,13 +281,32 @@ static void sandpiper_vpu_update_display(void *opaque)
                     dest[y * stride + x] = idx * 0x010101; /* Grayscale fallback */
                 }
             }
+            if (s->vcp) {
+                sandpiper_vcp_run(s->vcp, y, scan_width);
+            }
+        }
+
+        /* Simulate VBLANK lines (lines 480-524) */
+        for (y = scan_height; y < scan_height + 45; y++) {
+             if (s->vcp) {
+                 /* Run VCP for the whole line duration or just once per line? 
+                    Hardware likely runs it continuously or at least once. 
+                    Let's run it once per line with x=0 and x=scan_width to simulate start/end */
+                 sandpiper_vcp_run(s->vcp, y, 0);
+                 sandpiper_vcp_run(s->vcp, y, scan_width);
+             }
         }
     } else {
         /* 16bpp (RGB565) */
         src16 = (uint16_t *)((uint8_t *)vram_ptr + offset);
-        for (y = 0; y < height; y++) {
-            for (x = 0; x < width; x++) {
-                uint16_t pixel = src16[y * width + x];
+        for (y = 0; y < scan_height; y++) {
+            int fb_y = (s->mode_flags & VMODE_SCAN_DOUBLE) ? y >> 1 : y;
+            for (x = 0; x < scan_width; x++) {
+                if (s->vcp) {
+                    sandpiper_vcp_run(s->vcp, y, x);
+                }
+                int fb_x = (s->mode_flags & VMODE_WIDTH_640) ? x : x >> 1;
+                uint16_t pixel = src16[fb_y * fb_width + fb_x];
                 /* Convert RGB565 to RGB888 */
                 uint8_t r = (pixel >> 11) & 0x1F;
                 uint8_t g = (pixel >> 5) & 0x3F;
@@ -288,10 +316,21 @@ static void sandpiper_vpu_update_display(void *opaque)
                 b = (b << 3) | (b >> 2);
                 dest[y * stride + x] = (r << 16) | (g << 8) | b;
             }
+            if (s->vcp) {
+                sandpiper_vcp_run(s->vcp, y, scan_width);
+            }
+        }
+
+        /* Simulate VBLANK lines (lines 480-524) */
+        for (y = scan_height; y < scan_height + 45; y++) {
+             if (s->vcp) {
+                 sandpiper_vcp_run(s->vcp, y, 0);
+                 sandpiper_vcp_run(s->vcp, y, scan_width);
+             }
         }
     }
 
-    dpy_gfx_update(s->con, 0, 0, width, height);
+    dpy_gfx_update(s->con, 0, 0, scan_width, scan_height);
 }
 
 static void sandpiper_vpu_invalidate_display(void *opaque)
@@ -409,47 +448,10 @@ static const TypeInfo sandpiper_vpu_info = {
     .class_init = sandpiper_vpu_class_init,
 };
 
-/* VCP Module (Stub) */
-
-static uint64_t sandpiper_vcp_read(void *opaque, hwaddr offset,
-                                   unsigned size)
-{
-    return 0;
-}
-
-static void sandpiper_vcp_write(void *opaque, hwaddr offset,
-                                uint64_t value, unsigned size)
-{
-    /* Stub */
-}
-
-static const MemoryRegionOps sandpiper_vcp_ops = {
-    .read = sandpiper_vcp_read,
-    .write = sandpiper_vcp_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
-};
-
-static void sandpiper_vcp_init(Object *obj)
-{
-    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
-    MemoryRegion *iomem = g_new(MemoryRegion, 1);
-
-    memory_region_init_io(iomem, obj, &sandpiper_vcp_ops, NULL,
-                          "sandpiper-vcp", 0x1000);
-    sysbus_init_mmio(sbd, iomem);
-}
-
-static const TypeInfo sandpiper_vcp_info = {
-    .name = TYPE_SANDPIPER_VCP,
-    .parent = TYPE_SYS_BUS_DEVICE,
-    .instance_init = sandpiper_vcp_init,
-};
-
 static void sandpiper_vpu_register_types(void)
 {
     type_register_static(&sandpiper_palette_info);
     type_register_static(&sandpiper_vpu_info);
-    type_register_static(&sandpiper_vcp_info);
 }
 
 type_init(sandpiper_vpu_register_types)

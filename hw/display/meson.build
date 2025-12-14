@@ -35,7 +35,7 @@ system_ss.add(when: 'CONFIG_NEXTCUBE', if_true: files('next-fb.c'))
 system_ss.add(when: 'CONFIG_VGA', if_true: files('vga.c'))
 system_ss.add(when: 'CONFIG_VIRTIO', if_true: files('virtio-dmabuf.c'))
 system_ss.add(when: 'CONFIG_DM163', if_true: files('dm163.c'))
-system_ss.add(when: 'CONFIG_SANDPIPER_VPU', if_true: files('sandpiper_vpu.c'))
+system_ss.add(when: 'CONFIG_SANDPIPER_VPU', if_true: files('sandpiper_vpu.c', 'sandpiper_vcp.c'))
 
 if (config_all_devices.has_key('CONFIG_VGA_CIRRUS') or
     config_all_devices.has_key('CONFIG_VGA_PCI') or

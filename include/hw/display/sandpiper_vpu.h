@@ -23,6 +23,7 @@ typedef struct SandpiperVPUState {
     MemoryRegion iomem;
     QemuConsole *con;
     SandpiperPaletteState *palette;
+    struct SandpiperVCPState *vcp;
 
     uint32_t vpage;
     uint32_t second_buffer;
@@ -43,14 +44,5 @@ typedef struct SandpiperVPUState {
     uint32_t shift_scanout;
     uint32_t shift_pixel;
 } SandpiperVPUState;
-
-#define TYPE_SANDPIPER_VCP "sandpiper-vcp"
-#define SANDPIPER_VCP(obj) \
-    OBJECT_CHECK(SandpiperVCPState, (obj), TYPE_SANDPIPER_VCP)
-
-typedef struct SandpiperVCPState {
-    SysBusDevice parent_obj;
-    MemoryRegion iomem;
-} SandpiperVCPState;
 
 #endif
