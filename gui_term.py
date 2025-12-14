@@ -18,12 +18,17 @@ class TerminalGUI:
         # Configure font
         # Prioritize fonts with good Unicode/Powerline support
         available_fonts = set(font.families(master))
-        if "Cascadia Code" in available_fonts:
-            font_family = "Cascadia Code"
-        elif "Consolas" in available_fonts:
-            font_family = "Consolas"
-        else:
-            font_family = "Courier New"
+        
+        # Preferred fonts in order
+        # Cascadia Code/Mono are best for Powerline
+        # Consolas is standard Windows but lacks some Powerline glyphs
+        preferred = ["Cascadia Code", "Cascadia Mono", "MesloLGS NF", "Consolas", "Lucida Console"]
+        
+        font_family = "Courier New" # Ultimate fallback
+        for f in preferred:
+            if f in available_fonts:
+                font_family = f
+                break
         
         self.custom_font = font.Font(family=font_family, size=11)
 
@@ -57,9 +62,14 @@ class TerminalGUI:
         self.csi_curr_param = ""
         self.current_tags = [] # List of tag names to apply to new text
         self.update_tags()
+        
+        # Scrolling Region
+        self.scroll_top = 1
+        self.scroll_bottom = 0 # 0 means infinite/unset
 
         # Bindings
         self.text_area.bind("<Key>", self.on_key)
+        self.text_area.bind("<Button-3>", self.on_right_click)
         
         self.socket = None
         self.connect()
@@ -107,6 +117,29 @@ class TerminalGUI:
             pass
         self.master.after(10, self.process_queue)
 
+    def scroll_up(self, top, bottom):
+        # Delete top line of region
+        self.text_area.delete(f"{top}.0", f"{top+1}.0")
+        # Insert new line at bottom of region
+        # Since we deleted one line, the old 'bottom' index is now 'bottom-1'
+        # We want the new line to appear at 'bottom'.
+        # Inserting at 'bottom.0' (which is currently the line AFTER the region)
+        # will push that line down and create a new line at 'bottom'.
+        # If bottom is the last line, we just append.
+        
+        # Check if we need to extend to bottom first
+        current_lines = int(self.text_area.index("end-1c").split('.')[0])
+        if bottom > current_lines:
+             self.text_area.insert("end", "\n" * (bottom - current_lines))
+        
+        self.text_area.insert(f"{bottom}.0", "\n")
+
+    def scroll_down(self, top, bottom):
+        # Delete bottom line of region
+        self.text_area.delete(f"{bottom}.0", f"{bottom+1}.0")
+        # Insert new line at top of region
+        self.text_area.insert(f"{top}.0", "\n")
+
     def parse_ansi(self, text):
         for char in text:
             if self.state == 'NORMAL':
@@ -116,11 +149,15 @@ class TerminalGUI:
                     # Carriage Return: Move cursor to start of current line
                     self.text_area.mark_set("insert", "insert linestart")
                 elif char == '\n':
-                    # Line Feed: Move down
-                    # If at bottom, add new line
-                    if self.text_area.compare("insert", ">=", "end-1c linestart"):
-                        self.text_area.insert("end", "\n")
-                    self.text_area.mark_set("insert", "insert+1l")
+                    # Line Feed: Move down or scroll
+                    row = int(self.text_area.index("insert").split('.')[0])
+                    if self.scroll_bottom > 0 and row == self.scroll_bottom:
+                        self.scroll_up(self.scroll_top, self.scroll_bottom)
+                    else:
+                        # If at bottom of buffer, add new line
+                        if self.text_area.compare("insert", ">=", "end-1c linestart"):
+                            self.text_area.insert("end", "\n")
+                        self.text_area.mark_set("insert", "insert+1l")
                 elif char == '\b':
                     # Backspace: Move left
                     # Check if we are at start of line
@@ -155,6 +192,22 @@ class TerminalGUI:
                     self.osc_buffer = ""
                 elif char in '()':
                     self.state = 'CHARSET'
+                elif char == 'D': # IND - Index (Scroll Down)
+                    row = int(self.text_area.index("insert").split('.')[0])
+                    if self.scroll_bottom > 0 and row == self.scroll_bottom:
+                        self.scroll_up(self.scroll_top, self.scroll_bottom)
+                    else:
+                        if self.text_area.compare("insert", ">=", "end-1c linestart"):
+                            self.text_area.insert("end", "\n")
+                        self.text_area.mark_set("insert", "insert+1l")
+                    self.state = 'NORMAL'
+                elif char == 'M': # RI - Reverse Index (Scroll Up)
+                    row = int(self.text_area.index("insert").split('.')[0])
+                    if self.scroll_bottom > 0 and row == self.scroll_top:
+                        self.scroll_down(self.scroll_top, self.scroll_bottom)
+                    else:
+                        self.text_area.mark_set("insert", "insert-1l")
+                    self.state = 'NORMAL'
                 else:
                     # Ignore other sequences (like G0 sets) for now, reset
                     self.state = 'NORMAL'
@@ -241,7 +294,100 @@ class TerminalGUI:
                 return int(params[idx])
             return default
 
-        if cmd == 'm': # SGR - Select Graphic Rendition
+        if cmd == 'r': # DECSTBM - Set Scrolling Region
+            top = get_param(0, 1)
+            bottom = get_param(1, 0) # 0 means default/end
+            self.scroll_top = top
+            self.scroll_bottom = bottom
+            self.move_cursor(1, 1)
+
+        elif cmd == 'L': # IL - Insert Line
+            # Insert n lines at cursor, scrolling lines below down
+            # Only affects lines within scrolling region if set?
+            # Usually affects lines from cursor to bottom of scrolling region.
+            n = get_param(0, 1)
+            row = int(self.text_area.index("insert").split('.')[0])
+            
+            # Determine effective bottom
+            eff_bottom = self.scroll_bottom if self.scroll_bottom > 0 else int(self.text_area.index("end-1c").split('.')[0])
+            
+            if row >= self.scroll_top and row <= eff_bottom:
+                # Delete n lines from bottom of region
+                # We need to delete lines (eff_bottom - n + 1) to eff_bottom
+                # But wait, inserting at row pushes everything down.
+                # So we delete from bottom first.
+                
+                # Range to delete: from (eff_bottom - n + 1) to (eff_bottom + 1)
+                del_start = max(row, eff_bottom - n + 1)
+                self.text_area.delete(f"{del_start}.0", f"{eff_bottom+1}.0")
+                
+                # Insert n newlines at row
+                self.text_area.insert(f"{row}.0", "\n" * n)
+
+        elif cmd == 'M': # DL - Delete Line
+            # Delete n lines at cursor, scrolling lines below up
+            # Affects lines from cursor to bottom of scrolling region.
+            n = get_param(0, 1)
+            row = int(self.text_area.index("insert").split('.')[0])
+            
+            eff_bottom = self.scroll_bottom if self.scroll_bottom > 0 else int(self.text_area.index("end-1c").split('.')[0])
+            
+            if row >= self.scroll_top and row <= eff_bottom:
+                # Delete n lines at row
+                # Range: row to row+n
+                del_end = min(row + n, eff_bottom + 1)
+                self.text_area.delete(f"{row}.0", f"{del_end}.0")
+                
+                # Insert n newlines at bottom of region
+                # Insert at eff_bottom (which has shifted up)
+                # Actually, we deleted (del_end - row) lines.
+                # We need to add that many lines at the bottom.
+                count = del_end - row
+                
+                # The old eff_bottom is now at eff_bottom - count.
+                # We want to insert at eff_bottom - count + 1?
+                # No, we want the new lines to be at the end of the region.
+                # So we insert at (eff_bottom - count + 1).0
+                
+                # Wait, simpler:
+                # We want to restore the region size.
+                # We deleted 'count' lines.
+                # We append 'count' lines at the end of the region.
+                # The end of the region is now at index (eff_bottom - count).
+                # So we insert at (eff_bottom - count + 1).0?
+                # No, insert at (eff_bottom - count + 1).0 puts it AFTER the last line.
+                # Which is correct.
+                
+                # But wait, if eff_bottom was the last line of the buffer.
+                # We just append.
+                
+                # If eff_bottom was NOT the last line (e.g. menu below).
+                # We insert before the menu.
+                
+                # The menu is now at (eff_bottom - count + 1).
+                # So inserting at (eff_bottom - count + 1).0 pushes menu down.
+                
+                # But wait, indices shift.
+                # If we delete lines 5-6.
+                # Line 7 becomes 5.
+                # We want to insert 2 lines at 7 (which is now 5 + (7-5) = 7? No).
+                # We want to insert at the original bottom index?
+                # No.
+                # We want to insert at (eff_bottom - count + 1).0
+                
+                # Let's verify.
+                # Region 1-10. Delete 2 lines at 5.
+                # Lines 5,6 gone.
+                # 7->5, 8->6, 9->7, 10->8.
+                # Region now ends at 8.
+                # We want to add 2 lines at 9, 10.
+                # So we insert at 9.0.
+                # 9.0 is (10 - 2 + 1). Correct.
+                
+                insert_pos = eff_bottom - count + 1
+                self.text_area.insert(f"{insert_pos}.0", "\n" * count)
+
+        elif cmd == 'm': # SGR - Select Graphic Rendition
             if not params:
                 self.fg_idx = 7
                 self.bg_idx = 0
@@ -328,6 +474,25 @@ class TerminalGUI:
             n = get_param(0, 1)
             self.text_area.mark_set("insert", f"insert-{n}c")
 
+    def copy_selection(self):
+        try:
+            text = self.text_area.get("sel.first", "sel.last")
+            self.master.clipboard_clear()
+            self.master.clipboard_append(text)
+        except tk.TclError:
+            pass
+
+    def paste_clipboard(self):
+        try:
+            text = self.master.clipboard_get()
+            self.send(text.encode('utf-8'))
+        except:
+            pass
+
+    def on_right_click(self, event):
+        self.paste_clipboard()
+        return "break"
+
     def on_key(self, event):
         # Map special keys
         if event.keysym == 'Return':
@@ -348,8 +513,15 @@ class TerminalGUI:
             self.send(b'\x1b[1~') # VT100/Linux
         elif event.keysym == 'End':
             self.send(b'\x1b[4~')
+        elif event.char == '\x03': # Ctrl+C
+            if self.text_area.tag_ranges("sel"):
+                self.copy_selection()
+            else:
+                self.send(b'\x03')
+        elif event.char == '\x16': # Ctrl+V
+            self.paste_clipboard()
         elif event.char:
-            # Handle Ctrl+C etc
+            # Handle other chars
             self.send(event.char.encode('utf-8'))
         return "break"
 
