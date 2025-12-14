@@ -5,12 +5,11 @@ import threading
 import sys
 import os
 import queue
-import re
 
 class TerminalGUI:
     def __init__(self, master):
         self.master = master
-        master.title("QEMU Terminal")
+        master.title("QEMU Terminal (fbcon emulation)")
         master.geometry("800x600")
 
         # Queue for thread-safe GUI updates
@@ -19,199 +18,244 @@ class TerminalGUI:
         # Configure font
         self.custom_font = font.Font(family="Segoe UI", size=11)
 
-        # Text widget with black background
-        self.text_area = tk.Text(master, bg="#1e1e1e", fg="#cccccc", 
+        # Text widget
+        # blockcursor=True gives a block cursor like a console
+        self.text_area = tk.Text(master, bg="#000000", fg="#aaaaaa", 
                                  font=self.custom_font, insertbackground="white",
-                                 state="disabled")
+                                 state="normal", blockcursor=True)
         self.text_area.pack(expand=True, fill="both")
+        self.text_area.focus_set()
 
-        # Define tags for ANSI colors
+        # ANSI Colors (Standard VGA)
         self.colors = {
-            # Foreground
-            '30': '#000000', '31': '#cd3131', '32': '#0dbc79', '33': '#e5e510',
-            '34': '#2472c8', '35': '#bc3fbc', '36': '#11a8cd', '37': '#e5e5e5',
-            '90': '#666666', '91': '#f14c4c', '92': '#23d18b', '93': '#f5f543',
-            '94': '#3b8eea', '95': '#d670d6', '96': '#29b8db', '97': '#ffffff',
-            # Background
-            '40': '#000000', '41': '#cd3131', '42': '#0dbc79', '43': '#e5e510',
-            '44': '#2472c8', '45': '#bc3fbc', '46': '#11a8cd', '47': '#e5e5e5',
-            '100': '#666666', '101': '#f14c4c', '102': '#23d18b', '103': '#f5f543',
-            '104': '#3b8eea', '105': '#d670d6', '106': '#29b8db', '107': '#ffffff',
+            # FG
+            '30': '#000000', '31': '#aa0000', '32': '#00aa00', '33': '#aa5500',
+            '34': '#0000aa', '35': '#aa00aa', '36': '#00aaaa', '37': '#aaaaaa',
+            '90': '#555555', '91': '#ff5555', '92': '#55ff55', '93': '#ffff55',
+            '94': '#5555ff', '95': '#ff55ff', '96': '#55ffff', '97': '#ffffff',
+            # BG
+            '40': '#000000', '41': '#aa0000', '42': '#00aa00', '43': '#aa5500',
+            '44': '#0000aa', '45': '#aa00aa', '46': '#00aaaa', '47': '#aaaaaa',
+            '100': '#555555', '101': '#ff5555', '102': '#55ff55', '103': '#ffff55',
+            '104': '#5555ff', '105': '#ff55ff', '106': '#55ffff', '107': '#ffffff',
         }
+        
+        # Initialize tags
         for code, color in self.colors.items():
-            if int(code) >= 40: # Background
+            if int(code) >= 40:
                 self.text_area.tag_config(f"bg_{code}", background=color)
-            else: # Foreground
+            else:
                 self.text_area.tag_config(f"fg_{code}", foreground=color)
 
-        self.current_tags = []
-        self.ansi_buffer = ""
+        # Parser State
+        self.state = 'NORMAL'
+        self.csi_params = []
+        self.csi_curr_param = ""
+        self.current_tags = [] # List of tag names to apply to new text
 
-        # Bind key events to the main window so they work even if text area is disabled
-        master.bind("<Key>", self.on_key)
-        master.bind("<Up>", lambda e: self.send_key(b'\x1b[A'))
-        master.bind("<Down>", lambda e: self.send_key(b'\x1b[B'))
-        master.bind("<Right>", lambda e: self.send_key(b'\x1b[C'))
-        master.bind("<Left>", lambda e: self.send_key(b'\x1b[D'))
+        # Bindings
+        self.text_area.bind("<Key>", self.on_key)
         
         self.socket = None
         self.connect()
-
-        # Start checking queue
-        self.master.after(100, self.process_queue)
+        self.master.after(50, self.process_queue)
 
     def connect(self):
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect(('localhost', 5555))
-            self.append_text("Connected to QEMU.\n")
+            self.queue.put(b"Connected to QEMU.\r\n")
             
-            # Start receiver thread
             self.thread = threading.Thread(target=self.receive_loop, daemon=True)
             self.thread.start()
         except Exception as e:
-            self.append_text(f"Connection failed: {e}\n")
+            self.queue.put(f"Connection failed: {e}\r\n".encode('utf-8'))
 
     def receive_loop(self):
-        import codecs
-        decoder = codecs.getincrementaldecoder("utf-8")(errors='replace')
-        text_buffer = ""
-        
-        # Prefixes of keywords E0B[0-3] and <E0B[0-3]>
-        prefixes = {
-            "E", "E0", "E0B", 
-            "<", "<E", "<E0", "<E0B", 
-            "<E0B0", "<E0B1", "<E0B2", "<E0B3"
-        }
-        
         while True:
             try:
-                data = self.socket.recv(1024)
-                if not data:
-                    break
-                
-                # Decode with replacement for errors
-                text = decoder.decode(data, final=False)
-                text_buffer += text
-                
-                # Process buffer for replacements
-                
-                # Map Powerline Private Use Area characters to standard Unicode
-                text_buffer = text_buffer.replace('\ue0b0', '\u25b6') 
-                text_buffer = text_buffer.replace('\ue0b1', '\u276f')
-                text_buffer = text_buffer.replace('\ue0b2', '\u25c0')
-                text_buffer = text_buffer.replace('\ue0b3', '\u276e')
-
-                # Also handle literal hex strings if the guest is sending them
-                text_buffer = text_buffer.replace('E0B0', '\u25b6')
-                text_buffer = text_buffer.replace('E0B1', '\u276f')
-                text_buffer = text_buffer.replace('E0B2', '\u25c0')
-                text_buffer = text_buffer.replace('E0B3', '\u276e')
-                
-                # Handle <E0B0> format
-                text_buffer = text_buffer.replace('<E0B0>', '\u25b6')
-                text_buffer = text_buffer.replace('<E0B1>', '\u276f')
-                text_buffer = text_buffer.replace('<E0B2>', '\u25c0')
-                text_buffer = text_buffer.replace('<E0B3>', '\u276e')
-
-                # Determine how much to keep in buffer (if end looks like a partial keyword)
-                keep_len = 0
-                # Max partial length is 5 (e.g. "<E0B0")
-                for i in range(5, 0, -1):
-                    if i > len(text_buffer): continue
-                    suffix = text_buffer[-i:]
-                    if suffix in prefixes:
-                        keep_len = i
-                        break
-
-                if keep_len > 0:
-                    to_send = text_buffer[:-keep_len]
-                    text_buffer = text_buffer[-keep_len:]
-                    if to_send:
-                        self.queue.put(to_send)
-                else:
-                    self.queue.put(text_buffer)
-                    text_buffer = ""
-                
-            except Exception:
+                data = self.socket.recv(4096)
+                if not data: break
+                self.queue.put(data)
+            except:
                 break
-        
-        # Flush remaining buffer
-        if text_buffer:
-            self.queue.put(text_buffer)
-        self.queue.put(None) # Signal disconnect
+        self.queue.put(None)
 
     def process_queue(self):
         try:
             while True:
-                text = self.queue.get_nowait()
-                if text is None:
-                    self.append_text("\nDisconnected.")
+                data = self.queue.get_nowait()
+                if data is None:
+                    self.text_area.insert(tk.END, "\nDisconnected.")
+                    self.text_area.config(state="disabled")
+                    return
+                
+                # Decode
+                if isinstance(data, bytes):
+                    text = data.decode('utf-8', errors='replace')
                 else:
-                    self.append_text(text)
+                    text = data
+                
+                self.parse_ansi(text)
+                self.text_area.see("insert")
         except queue.Empty:
             pass
-        self.master.after(50, self.process_queue)
+        self.master.after(10, self.process_queue)
 
-    def append_text(self, text):
-        self.text_area.config(state="normal")
-        
-        # Combine with any leftover buffer from previous chunk
-        full_text = self.ansi_buffer + text
-        self.ansi_buffer = ""
-
-        # Split by ANSI escape codes
-        # Regex matches \x1b[...m
-        parts = re.split(r'(\x1b\[[0-9;]*m)', full_text)
-        
-        # If the last part looks like an incomplete ANSI code, buffer it
-        if parts[-1].startswith('\x1b') and not parts[-1].endswith('m'):
-            self.ansi_buffer = parts.pop()
-
-        for part in parts:
-            if part.startswith('\x1b['):
-                # Parse code
-                code_seq = part[2:-1]
-                if code_seq == '0' or code_seq == '':
-                    self.current_tags = []
+    def parse_ansi(self, text):
+        for char in text:
+            if self.state == 'NORMAL':
+                if char == '\x1b':
+                    self.state = 'ESC'
+                elif char == '\r':
+                    # Carriage Return: Move cursor to start of current line
+                    self.text_area.mark_set("insert", "insert linestart")
+                elif char == '\n':
+                    # Line Feed: Move down
+                    # If at bottom, add new line
+                    if self.text_area.compare("insert", ">=", "end-1c linestart"):
+                        self.text_area.insert("end", "\n")
+                    self.text_area.mark_set("insert", "insert+1l")
+                elif char == '\b':
+                    # Backspace: Move left
+                    # Check if we are at start of line
+                    if self.text_area.compare("insert", "!=", "insert linestart"):
+                        self.text_area.mark_set("insert", "insert-1c")
+                elif char == '\t':
+                    self.text_area.insert("insert", "\t")
+                elif char == '\x07': # Bell
+                    pass
                 else:
-                    codes = code_seq.split(';')
-                    for c in codes:
-                        if c in self.colors:
-                            if int(c) >= 40: # Background
-                                # Remove existing bg tags
-                                self.current_tags = [t for t in self.current_tags if not t.startswith('bg_')]
-                                self.current_tags.append(f"bg_{c}")
-                            else: # Foreground
-                                # Remove existing fg tags
-                                self.current_tags = [t for t in self.current_tags if not t.startswith('fg_')]
-                                self.current_tags.append(f"fg_{c}")
+                    # Normal character
+                    # VT100 behavior: Overwrite character at cursor
+                    # Check if we are at end of line
+                    if self.text_area.compare("insert", "==", "insert lineend"):
+                        # Append
+                        self.text_area.insert("insert", char, tuple(self.current_tags))
+                    else:
+                        # Overwrite
+                        self.text_area.delete("insert")
+                        self.text_area.insert("insert", char, tuple(self.current_tags))
+            
+            elif self.state == 'ESC':
+                if char == '[':
+                    self.state = 'CSI'
+                    self.csi_params = []
+                    self.csi_curr_param = ""
+                else:
+                    # Ignore other sequences (like G0 sets) for now, reset
+                    self.state = 'NORMAL'
+            
+            elif self.state == 'CSI':
+                if char.isdigit():
+                    self.csi_curr_param += char
+                elif char == ';':
+                    self.csi_params.append(self.csi_curr_param)
+                    self.csi_curr_param = ""
+                elif char == '?':
+                    # Private mode, ignore for now but consume
+                    pass
+                else:
+                    # Final byte
+                    if self.csi_curr_param:
+                        self.csi_params.append(self.csi_curr_param)
+                    
+                    self.handle_csi(char, self.csi_params)
+                    self.state = 'NORMAL'
+
+    def handle_csi(self, cmd, params):
+        # Default param is usually 0 or 1 depending on command
+        # Helper to get int param
+        def get_param(idx, default=1):
+            if idx < len(params) and params[idx]:
+                return int(params[idx])
+            return default
+
+        if cmd == 'm': # SGR - Select Graphic Rendition
+            if not params:
+                self.current_tags = []
             else:
-                if part:
-                    self.text_area.insert(tk.END, part, tuple(self.current_tags))
+                for p in params:
+                    if not p: continue
+                    code = int(p)
+                    if code == 0:
+                        self.current_tags = []
+                    elif 30 <= code <= 37 or 90 <= code <= 97:
+                        # Remove existing FG
+                        self.current_tags = [t for t in self.current_tags if not t.startswith('fg_')]
+                        self.current_tags.append(f"fg_{code}")
+                    elif 40 <= code <= 47 or 100 <= code <= 107:
+                        # Remove existing BG
+                        self.current_tags = [t for t in self.current_tags if not t.startswith('bg_')]
+                        self.current_tags.append(f"bg_{code}")
         
-        self.text_area.see(tk.END)
-        self.text_area.config(state="disabled")
+        elif cmd == 'K': # EL - Erase in Line
+            mode = get_param(0, 0)
+            if mode == 0: # Cursor to end
+                self.text_area.delete("insert", "insert lineend")
+            elif mode == 1: # Start to cursor
+                self.text_area.delete("insert linestart", "insert")
+            elif mode == 2: # Whole line
+                self.text_area.delete("insert linestart", "insert lineend")
+        
+        elif cmd == 'J': # ED - Erase in Display
+            mode = get_param(0, 0)
+            if mode == 0: # Cursor to end of screen
+                self.text_area.delete("insert", tk.END)
+            elif mode == 1: # Start of screen to cursor
+                self.text_area.delete("1.0", "insert")
+            elif mode == 2: # Clear entire screen
+                self.text_area.delete("1.0", tk.END)
+        
+        elif cmd == 'H' or cmd == 'f': # CUP - Cursor Position
+            row = get_param(0, 1)
+            col = get_param(1, 1)
+            # Tkinter indices are line.col (line is 1-based, col is 0-based)
+            self.text_area.mark_set("insert", f"{row}.{col-1}")
+
+        elif cmd == 'A': # Cursor Up
+            n = get_param(0, 1)
+            self.text_area.mark_set("insert", f"insert-{n}l")
+        elif cmd == 'B': # Cursor Down
+            n = get_param(0, 1)
+            self.text_area.mark_set("insert", f"insert+{n}l")
+        elif cmd == 'C': # Cursor Forward
+            n = get_param(0, 1)
+            self.text_area.mark_set("insert", f"insert+{n}c")
+        elif cmd == 'D': # Cursor Back
+            n = get_param(0, 1)
+            self.text_area.mark_set("insert", f"insert-{n}c")
 
     def on_key(self, event):
-        # Ignore arrow keys (handled by specific bindings)
-        if event.keysym in ('Up', 'Down', 'Left', 'Right'):
-            return "break"
-
-        if event.char:
-            try:
-                self.send_key(event.char.encode('utf-8'))
-            except:
-                pass
+        # Map special keys
+        if event.keysym == 'Return':
+            self.send(b'\r')
+        elif event.keysym == 'BackSpace':
+            self.send(b'\x7f') # Usually DEL/Backspace
+        elif event.keysym == 'Tab':
+            self.send(b'\t')
+        elif event.keysym == 'Up':
+            self.send(b'\x1b[A')
+        elif event.keysym == 'Down':
+            self.send(b'\x1b[B')
+        elif event.keysym == 'Right':
+            self.send(b'\x1b[C')
+        elif event.keysym == 'Left':
+            self.send(b'\x1b[D')
+        elif event.keysym == 'Home':
+            self.send(b'\x1b[1~') # VT100/Linux
+        elif event.keysym == 'End':
+            self.send(b'\x1b[4~')
+        elif event.char:
+            # Handle Ctrl+C etc
+            self.send(event.char.encode('utf-8'))
         return "break"
 
-    def send_key(self, data):
+    def send(self, data):
         if self.socket:
             try:
                 self.socket.sendall(data)
-            except:
-                pass
-        return "break"
+            except: pass
 
 if __name__ == "__main__":
     root = tk.Tk()
