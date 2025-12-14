@@ -318,6 +318,7 @@ config SANDPIPER
     select PL310 # cache controller
     select PL330
     select SDHCI
+    select SANDPIPER_VPU
     select SIMPLE_FRAMEBUFFER
     select SSI_M25P80
     select USB_CHIPIDEA

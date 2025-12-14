@@ -43,6 +43,7 @@
 #include "exec/tswap.h"
 #include "target/arm/cpu-qom.h"
 #include "qapi/visitor.h"
+#include "hw/display/sandpiper_vpu.h"
 
 #define TYPE_SANDPIPER_MACHINE MACHINE_TYPE_NAME("sandpiper")
 OBJECT_DECLARE_SIMPLE_TYPE(SandpiperMachineState, SANDPIPER_MACHINE)
@@ -447,14 +448,28 @@ static void sandpiper_init(MachineState *machine)
     create_unimplemented_device("zynq.qos301_dmac", 0xF8947000, 0x130);
     create_unimplemented_device("zynq.qos301_iou", 0xF8948000, 0x130);
 
-    /* Simple framebuffer for display output */
-    dev = qdev_new("simple-framebuffer");
-    qdev_prop_set_uint64(dev, "base", 0x18000000);
-    qdev_prop_set_uint32(dev, "width", 640);
-    qdev_prop_set_uint32(dev, "height", 480);
-    qdev_prop_set_uint32(dev, "stride", 640 * 2);
-    qdev_prop_set_string(dev, "format", "r5g6b5");
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    /* Sandpiper VPU */
+    {
+        DeviceState *palette_dev;
+        DeviceState *vpu_dev;
+        DeviceState *vcp_dev;
+
+        /* Palette Module */
+        palette_dev = qdev_new(TYPE_SANDPIPER_PALETTE);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(palette_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(palette_dev), 0, 0x40002000);
+
+        /* VPU Module */
+        vpu_dev = qdev_new(TYPE_SANDPIPER_VPU);
+        object_property_set_link(OBJECT(vpu_dev), "palette", OBJECT(palette_dev), &error_fatal);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(vpu_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(vpu_dev), 0, 0x40001000);
+
+        /* VCP Module */
+        vcp_dev = qdev_new(TYPE_SANDPIPER_VCP);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(vcp_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(vcp_dev), 0, 0x40003000);
+    }
 
     zynq_binfo.ram_size = machine->ram_size;
     zynq_binfo.board_id = 0xd32;
