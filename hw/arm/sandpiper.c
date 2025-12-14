@@ -44,6 +44,7 @@
 #include "target/arm/cpu-qom.h"
 #include "qapi/visitor.h"
 #include "hw/display/sandpiper_vpu.h"
+#include "hw/audio/sandpiper_apu.h"
 
 #define TYPE_SANDPIPER_MACHINE MACHINE_TYPE_NAME("sandpiper")
 OBJECT_DECLARE_SIMPLE_TYPE(SandpiperMachineState, SANDPIPER_MACHINE)
@@ -447,6 +448,14 @@ static void sandpiper_init(MachineState *machine)
     create_unimplemented_device("zynq.qos301_cpu", 0xF8946000, 0x130);
     create_unimplemented_device("zynq.qos301_dmac", 0xF8947000, 0x130);
     create_unimplemented_device("zynq.qos301_iou", 0xF8948000, 0x130);
+
+    /* Sandpiper APU */
+    {
+        DeviceState *apu_dev;
+        apu_dev = qdev_new(TYPE_SANDPIPER_APU);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(apu_dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(apu_dev), 0, 0x40000000);
+    }
 
     /* Sandpiper VPU */
     {
