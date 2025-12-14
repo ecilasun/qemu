@@ -25,6 +25,7 @@
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
+#include "qemu/timer.h"
 #include "hw/sysbus.h"
 #include "hw/display/sandpiper_vpu.h"
 #include "ui/console.h"
@@ -110,6 +111,22 @@ static const TypeInfo sandpiper_palette_info = {
 };
 
 /* VPU Module */
+
+static void sandpiper_vpu_vsync_timer_cb(void *opaque)
+{
+    SandpiperVPUState *s = SANDPIPER_VPU(opaque);
+
+    s->vblank_toggle = !s->vblank_toggle;
+
+    if (s->swap_pending) {
+        uint32_t tmp = s->vpage;
+        s->vpage = s->second_buffer;
+        s->second_buffer = tmp;
+        s->swap_pending = false;
+    }
+
+    timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME) + NANOSECONDS_PER_SECOND / 60);
+}
 
 static void sandpiper_vpu_update_display(void *opaque)
 {
@@ -222,9 +239,9 @@ static uint64_t sandpiper_vpu_read(void *opaque, hwaddr offset,
 
     if (offset == 0) {
         /* Status Register */
-        /* Bit 0: blanktoggle (toggle every vsync) - simulate with timer? */
+        /* Bit 0: blanktoggle (toggle every vsync) */
         /* Bit 11: !FIFO_EMPTY - always 0 (empty) since we process immediately */
-        return 0; 
+        return s->vblank_toggle; 
     }
     return 0;
 }
@@ -273,12 +290,8 @@ static void sandpiper_vpu_write(void *opaque, hwaddr offset,
         s->cmd_pending = true;
         break;
     case CMD_SYNCSWAP:
-        /* Swap buffers */
-        {
-            uint32_t tmp = s->vpage;
-            s->vpage = s->second_buffer;
-            s->second_buffer = tmp;
-        }
+        /* Swap buffers at next VBLANK */
+        s->swap_pending = true;
         break;
     case CMD_WCONTROLREG:
         /* Handle control reg */
@@ -314,6 +327,7 @@ static void sandpiper_vpu_realize(DeviceState *dev, Error **errp)
     SandpiperVPUState *s = SANDPIPER_VPU(dev);
 
     s->con = graphic_console_init(dev, 0, &sandpiper_vpu_gfx_ops, s);
+    s->vsync_timer = timer_new_ns(QEMU_CLOCK_REALTIME, sandpiper_vpu_vsync_timer_cb, s);
 }
 
 static const Property sandpiper_vpu_properties[] = {
@@ -331,6 +345,9 @@ static void sandpiper_vpu_reset(DeviceState *dev)
     s->second_buffer = 0;
     s->cmd_pending = false;
     s->pending_cmd_opcode = 0;
+    s->vblank_toggle = false;
+    s->swap_pending = false;
+    timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME));
 }
 
 static void sandpiper_vpu_class_init(ObjectClass *klass, const void *data)

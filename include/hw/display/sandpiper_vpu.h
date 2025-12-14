@@ -30,6 +30,10 @@ typedef struct SandpiperVPUState {
     
     bool cmd_pending;
     uint8_t pending_cmd_opcode;
+
+    QEMUTimer *vsync_timer;
+    bool vblank_toggle;
+    bool swap_pending;
 } SandpiperVPUState;
 
 #define TYPE_SANDPIPER_VCP "sandpiper-vcp"
