@@ -3097,9 +3097,10 @@ static void sd_realize(DeviceState *dev, Error **errp)
                 return;
             }
         } else if (blk_size > 0 && !is_power_of_2(blk_size)) {
-            sd_blk_size_error(sd, blk_size, pow2ceil(blk_size), "a power of 2",
+            /* sd_blk_size_error(sd, blk_size, pow2ceil(blk_size), "a power of 2",
                               errp);
-            return;
+            return; */
+            warn_report("SD card size %" PRId64 " is not a power of 2, but continuing anyway.", blk_size);
         } else if (blk_size < 0) {
             error_setg(errp, "eMMC image smaller than boot partitions");
             return;
