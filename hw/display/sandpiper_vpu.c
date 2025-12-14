@@ -133,7 +133,7 @@ static void sandpiper_vpu_update_display(void *opaque)
     }
 
     width = (s->mode_flags & VMODE_WIDTH_640) ? 640 : 320;
-    height = (s->mode_flags & VMODE_WIDTH_640) ? 480 : 240;
+    height = (s->mode_flags & VMODE_SCAN_DOUBLE) ? 240 : 480;
     bpp = (s->mode_flags & VMODE_DEPTH_16BPP) ? 16 : 8;
 
     if (width == 320 && bpp == 8) {
