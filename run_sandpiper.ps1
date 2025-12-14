@@ -38,5 +38,4 @@ Write-Host "Press Ctrl+A, X to exit QEMU."
     -drive file=$SD_IMG,if=sd,format=raw `
     -kernel $KERNEL `
     -dtb $DTB `
-    -append "console=ttyPS0,115200 root=/dev/mmcblk0p2 rw rootwait earlyprintk" `
-    -d guest_errors,unimp
+    -append "console=ttyPS0,115200 root=/dev/mmcblk0p2 rw rootwait earlyprintk"
