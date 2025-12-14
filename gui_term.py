@@ -16,7 +16,16 @@ class TerminalGUI:
         self.queue = queue.Queue()
 
         # Configure font
-        self.custom_font = font.Font(family="Segoe UI", size=11)
+        # Prioritize fonts with good Unicode/Powerline support
+        available_fonts = set(font.families(master))
+        if "Cascadia Code" in available_fonts:
+            font_family = "Cascadia Code"
+        elif "Consolas" in available_fonts:
+            font_family = "Consolas"
+        else:
+            font_family = "Courier New"
+        
+        self.custom_font = font.Font(family=font_family, size=11)
 
         # Text widget
         # blockcursor=True gives a block cursor like a console
