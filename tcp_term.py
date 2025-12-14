@@ -11,14 +11,26 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
+import codecs
+
 def receive_data(sock):
+    # Use an incremental decoder to handle UTF-8 characters split across packets
+    decoder = codecs.getincrementaldecoder("utf-8")(errors='replace')
+    
     while True:
         try:
             data = sock.recv(1024)
             if not data:
                 break
-            sys.stdout.buffer.write(data)
-            sys.stdout.buffer.flush()
+            
+            # Decode bytes to unicode string
+            text = decoder.decode(data, final=False)
+            
+            # Write unicode string directly to stdout
+            # Python on Windows uses the Unicode Console API (WriteConsoleW) 
+            # when writing strings to the console, bypassing code pages.
+            sys.stdout.write(text)
+            sys.stdout.flush()
         except Exception:
             break
     # When socket closes, exit
