@@ -1,0 +1,1 @@
+python extract_zimage.py H:\image.ub zImage_extracted
