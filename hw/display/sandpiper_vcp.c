@@ -99,6 +99,7 @@ static void sandpiper_vcp_write(void *opaque, hwaddr offset, uint64_t val, unsig
 
         {
             uint32_t cmd = val & 0xF;
+			uint32_t flags = (val >> 4) & 0xF;
             switch (cmd) {
             case VCP_CMD_SETBUFFERSIZE:
                 s->cmd_state = VCP_STATE_WAIT_BUFFER_SIZE;
@@ -107,7 +108,7 @@ static void sandpiper_vcp_write(void *opaque, hwaddr offset, uint64_t val, unsig
                 s->cmd_state = VCP_STATE_WAIT_DMA_ADDR;
                 break;
             case VCP_CMD_EXEC:
-                s->running = true;
+                s->running = flags & 0x1 ? true : false;
                 s->waiting = false;
                 s->pc = 0;
                 break;
