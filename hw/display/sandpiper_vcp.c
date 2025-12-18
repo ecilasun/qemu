@@ -34,6 +34,7 @@
 #define SRCREG1(inst)       ((inst >> 8) & 0xF)
 #define SRCREG2(inst)       ((inst >> 12) & 0xF)
 #define IMMED24(inst)       ((inst >> 8) & 0xFFFFFF)
+#define IMMED16(inst)       ((inst >> 16) & 0xFFFF)
 #define IMMED8(inst)        ((inst >> 24) & 0xFF)
 
 static void sandpiper_vcp_reset(DeviceState *dev)
@@ -145,155 +146,192 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
     int instructions_executed = 0;
     const int MAX_INSTRUCTIONS = 1000; /* Prevent infinite loops */
 
-    while (instructions_executed < MAX_INSTRUCTIONS) {
-        if (s->waiting) {
-            bool condition_met = false;
-            if (s->wait_line != -1) {
-                if (current_y >= s->wait_line) {
-                    condition_met = true;
-                }
-            } else if (s->wait_pixel != -1) {
-                /* Wait for pixel on current line? Or absolute pixel? */
-                /* Usually wait pixel is on the current line. */
-                /* If we are on the same line and x >= wait_pixel */
-                if (current_x >= s->wait_pixel) {
-                    condition_met = true;
-                }
-            }
+	while (instructions_executed < MAX_INSTRUCTIONS)
+	{
+		if (s->waiting)
+		{
+			bool condition_met = false;
+			if (s->wait_line != -1)
+			{
+				if (current_y >= s->wait_line)
+				{
+					condition_met = true;
+				}
+			}
+			else if (s->wait_pixel != -1)
+			{
+				/* Wait for pixel on current line? Or absolute pixel? */
+				/* Usually wait pixel is on the current line. */
+				/* If we are on the same line and x >= wait_pixel */
+				if (current_x >= s->wait_pixel)
+				{
+					condition_met = true;
+				}
+			}
 
-            if (condition_met) {
-                s->waiting = false;
-                s->wait_line = -1;
-                s->wait_pixel = -1;
-                s->pc++; /* Advance past the wait instruction */
-            } else {
-                return; /* Still waiting */
-            }
-        }
+			if (condition_met)
+			{
+				s->waiting = false;
+				s->wait_line = -1;
+				s->wait_pixel = -1;
+				s->pc++; /* Advance past the wait instruction */
+			}
+			else
+			{
+				return; /* Still waiting */
+			}
+		}
 
-        if (s->pc >= (VCP_MEM_SIZE / 4)) {
-            s->running = false;
-            return;
-        }
+		if (s->pc >= (VCP_MEM_SIZE / 4))
+		{
+			s->running = false;
+			return;
+		}
 
-        uint32_t inst = s->program_mem[s->pc];
-        uint32_t opcode = inst & 0xF;
-        
-        uint32_t dest = DESTREG(inst);
-        uint32_t src1 = SRCREG1(inst);
-        uint32_t src2 = SRCREG2(inst);
-        uint32_t imm24 = IMMED24(inst);
-        uint32_t imm8 = IMMED8(inst);
+		uint32_t inst = s->program_mem[s->pc];
+		uint32_t opcode = inst & 0xF;
+		
+		uint32_t dest = DESTREG(inst);
+		uint32_t src1 = SRCREG1(inst);
+		uint32_t src2 = SRCREG2(inst);
+		uint32_t imm24 = IMMED24(inst);
+		uint32_t imm16 = IMMED16(inst);
+		uint32_t imm8 = IMMED8(inst);
 
-        switch (opcode) {
-        case VCP_NOOP:
+		switch (opcode) {
+			case VCP_NOOP:
+			break;
+			case VCP_LOADIMM:
+				s->regs[dest] = imm24;
+			break;
+			case VCP_PALWRITE:
+			{
+				if (s->vpu && s->vpu->palette) {
+					uint32_t addr = s->regs[src1] & 0xFF;
+					uint32_t val = s->regs[src2];
+					s->vpu->palette->palette[addr] = val;
+				}
+			}
+			break;
+			case VCP_WAITSCANLINE:
+				s->wait_line = s->regs[src1];
+				s->wait_pixel = -1;
+				s->waiting = true;
+				return; /* Stop execution until condition met */
+			case VCP_WAITPIXEL:
+				s->wait_pixel = s->regs[src1];
+				s->wait_line = -1;
+				s->waiting = true;
+				return; /* Stop execution until condition met */
+			case VCP_MATHOP:
+			{
+				uint32_t v1 = s->regs[src1];
+				uint32_t v2 = s->regs[src2];
+				uint32_t res = 0;
+				switch (imm8)
+				{
+					case 0x00: res = v1 + v2; break; /* ADD */
+					case 0x01: res = v1 - v2; break; /* SUB */
+					case 0x02: res = v1 + 1; break; /* INC */
+					case 0x03: res = v1 - 1; break; /* DEC */
+					default: res =0; break;
+				}
+				s->regs[dest] = res;
+			}
             break;
-        case VCP_LOADIMM:
-            s->regs[dest] = imm24;
-            break;
-        case VCP_PALWRITE:
-            if (s->vpu && s->vpu->palette) {
-                uint32_t addr = s->regs[src1] & 0xFF;
-                uint32_t val = s->regs[src2];
-                s->vpu->palette->palette[addr] = val;
-            }
-            break;
-        case VCP_WAITSCANLINE:
-            s->wait_line = s->regs[src1];
-            s->wait_pixel = -1;
-            s->waiting = true;
-            return; /* Stop execution until condition met */
-        case VCP_WAITPIXEL:
-            s->wait_pixel = s->regs[src1];
-            s->wait_line = -1;
-            s->waiting = true;
-            return; /* Stop execution until condition met */
-        case VCP_MATHOP:
-            {
-                uint32_t v1 = s->regs[src1];
-                uint32_t v2 = s->regs[src2];
-                uint32_t res = 0;
-                switch (imm8) {
-                case 0x00: res = v1 + v2; break; /* ADD */
-                case 0x01: res = v1 - v2; break; /* SUB */
-                //case 0x02: res = v1 * v2; break; /* MUL */
-				//case 0x03: res = v1 * v2; break; /* DIV */
-                /* DIV skipped for simplicity/safety */
-                }
-                s->regs[dest] = res;
-            }
-            break;
-        case VCP_JUMP:
-            s->pc = s->regs[src1] / 4; /* Address is in bytes, PC is in words */
-            continue; /* Don't increment PC at end of loop */
-        case VCP_CMP:
-            {
-                uint32_t v1 = s->regs[src1];
-                uint32_t v2 = s->regs[src2];
-                bool res = false;
-                switch (imm8) {
-                case 0x01: res = (v1 <= v2); break; /* LE */
-                case 0x02: res = (v1 < v2); break;  /* LT */
-                case 0x04: res = (v1 == v2); break; /* EQ */
-                case 0x09: res = (v1 > v2); break;  /* GT = LE | 0x8 */
-                case 0x0A: res = (v1 >= v2); break; /* GE = LT | 0x8 */
-                case 0x0C: res = (v1 != v2); break; /* NE = EQ | 0x8 */
-                }
-                s->regs[dest] = res ? 1 : 0;
-            }
-            break;
-        case VCP_BRANCH:
-            if (s->regs[src2] & 1) {
-                s->pc = s->regs[src1] / 4;
-                continue;
-            }
-            break;
-        case VCP_STORE:
-            {
-                uint32_t addr = s->regs[src1] / 4;
-                if (addr < (VCP_MEM_SIZE / 4)) {
-                    s->program_mem[addr] = s->regs[src2];
-                }
-            }
-            break;
-        case VCP_LOAD:
-            {
-                uint32_t addr = s->regs[src1] / 4;
-                if (addr < (VCP_MEM_SIZE / 4)) {
-                    s->regs[dest] = s->program_mem[addr];
-                }
-            }
-            break;
-        case VCP_READSCANLINE:
-            s->regs[dest] = current_y;
-            break;
-        case VCP_READSCANPIXEL:
-            s->regs[dest] = current_x;
-            break;
-        case VCP_LOGICOP:
-            {
-                uint32_t v1 = s->regs[src1];
-                uint32_t v2 = s->regs[src2];
-                uint32_t res = 0;
-                switch (imm8) {
-                case 0x00: res = v1 & v2; break; /* AND */
-                case 0x01: res = v1 | v2; break; /* OR */
-                case 0x02: res = v1 ^ v2; break; /* XOR */
-                case 0x03: res = (int32_t)v1 >> (v2 & 0x1F); break; /* ASR */
-                case 0x04: res = v1 >> (v2 & 0x1F); break; /* SHR */
-                case 0x05: res = v1 << (v2 & 0x1F); break; /* SHL */
-                case 0x06: res = ~v1; break; /* NEG/NOT */
-                }
-                s->regs[dest] = res;
-            }
-            break;
-        case VCP_LCTL:
-            /* TODO: Read VPU control register */
-            break;
-        }
+			case VCP_JUMP:
+				if (dest == 0)
+				{
+					/* Normal jump */
+					s->pc = s->regs[src1] / 4; /* Address is in bytes, PC is in words */
+				} else {
+					/* Jump to immediate */
+					s->pc = (s->pc * 4 + (int32_t)(int16_t)imm16) / 4;
+				}
+				continue; /* Don't increment PC at end of loop */
+			case VCP_CMP:
+			{
+				uint32_t v1 = s->regs[src1];
+				uint32_t v2 = s->regs[src2];
+				bool res = false;
+				switch (imm8)
+				{
+					case 0x01: res = (v1 <= v2); break; /* LE */
+					case 0x02: res = (v1 < v2); break;  /* LT */
+					case 0x04: res = (v1 == v2); break; /* EQ */
+					case 0x09: res = (v1 > v2); break;  /* GT = LE | 0x8 */
+					case 0x0A: res = (v1 >= v2); break; /* GE = LT | 0x8 */
+					case 0x0C: res = (v1 != v2); break; /* NE = EQ | 0x8 */
+				}
+				s->cmpreg = res ? 1 : 0;
+			}
+			break;
+			case VCP_BRANCH:
+				if (s->cmpreg)
+				{
+					if (dest == 0)
+					{
+						/* Normal branch */
+						s->pc = s->regs[src1] / 4;
+					}
+					else
+					{
+						/* Branch to immediate */
+						s->pc = (s->pc + (signed int)imm16) / 4;
+					}
+					continue;
+				}
+			break;
+			case VCP_STORE:
+				{
+					uint32_t addr = s->regs[src1] / 4;
+					if (addr < (VCP_MEM_SIZE / 4))
+					{
+						s->program_mem[addr] = s->regs[src2];
+					}
+				}
+				break;
+			case VCP_LOAD:
+				{
+					uint32_t addr = s->regs[src1] / 4;
+					if (addr < (VCP_MEM_SIZE / 4))
+					{
+						s->regs[dest] = s->program_mem[addr];
+					}
+				}
+				break;
+			case VCP_READSCANLINE:
+				s->regs[dest] = current_y;
+			break;
+			case VCP_READSCANPIXEL:
+				s->regs[dest] = current_x;
+			break;
+			case VCP_LOGICOP:
+			{
+				uint32_t v1 = s->regs[src1];
+				uint32_t v2 = s->regs[src2];
+				uint32_t res = 0;
+				switch (imm8)
+				{
+					case 0x00: res = v1 & v2; break; /* AND */
+					case 0x01: res = v1 | v2; break; /* OR */
+					case 0x02: res = v1 ^ v2; break; /* XOR */
+					case 0x03: res = (int32_t)v1 >> (v2 & 0x1F); break; /* ASR */
+					case 0x04: res = v1 >> (v2 & 0x1F); break; /* SHR */
+					case 0x05: res = v1 << (v2 & 0x1F); break; /* SHL */
+					case 0x06: res = ~v1; break; /* NEG/NOT */
+					case 0x07: res = s->cmpreg; break; /* RCMP */
+				}
+				s->regs[dest] = res;
+			}
+			break;
+			case VCP_LCTL:
+				/* TODO: Read VPU control register */
+				break;
+		}
 
-        s->pc++;
-        instructions_executed++;
+		s->pc++;
+		instructions_executed++;
     }
 }
 
