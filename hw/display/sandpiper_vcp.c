@@ -25,10 +25,11 @@
 #define VCP_BRANCH          0x08
 #define VCP_STORE           0x09
 #define VCP_LOAD            0x0A
-#define VCP_READSCANLINE    0x0B
-#define VCP_READSCANPIXEL   0x0C
+#define VCP_READSCANINFO	0x0B
+#define VCP_UNUSED0			0x0C
 #define VCP_LOGICOP         0x0D
-#define VCP_LCTL            0x0E
+#define VCP_UNUSED2			0x0E
+#define VCP_UNUSED1			0x0F
 
 #define DESTREG(inst)       ((inst >> 4) & 0xF)
 #define SRCREG1(inst)       ((inst >> 8) & 0xF)
@@ -202,13 +203,15 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 
 		switch (opcode) {
 			case VCP_NOOP:
+				// Waste one clock
 			break;
 			case VCP_LOADIMM:
 				s->regs[dest] = imm24;
 			break;
 			case VCP_PALWRITE:
 			{
-				if (s->vpu && s->vpu->palette) {
+				if (s->vpu && s->vpu->palette)
+				{
 					uint32_t addr = s->regs[src1] & 0xFF;
 					uint32_t val = s->regs[src2];
 					s->vpu->palette->palette[addr] = val;
@@ -242,13 +245,15 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 			}
             break;
 			case VCP_JUMP:
-				if (dest == 0)
+				if (dest & 0x1)
+				{
+					/* Jump to immediate */
+					s->pc = (s->pc * 4 + (int32_t)(int16_t)imm16) / 4;
+				}
+				else
 				{
 					/* Normal jump */
 					s->pc = s->regs[src1] / 4; /* Address is in bytes, PC is in words */
-				} else {
-					/* Jump to immediate */
-					s->pc = (s->pc * 4 + (int32_t)(int16_t)imm16) / 4;
 				}
 				continue; /* Don't increment PC at end of loop */
 			case VCP_CMP:
@@ -271,15 +276,15 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 			case VCP_BRANCH:
 				if (s->cmpreg)
 				{
-					if (dest == 0)
-					{
-						/* Normal branch */
-						s->pc = s->regs[src1] / 4;
-					}
-					else
+					if (dest & 0x1)
 					{
 						/* Branch to immediate */
 						s->pc = (s->pc + (signed int)imm16) / 4;
+					}
+					else
+					{
+						/* Normal branch */
+						s->pc = s->regs[src1] / 4;
 					}
 					continue;
 				}
@@ -302,12 +307,17 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 					}
 				}
 				break;
-			case VCP_READSCANLINE:
-				s->regs[dest] = current_y;
+			case VCP_READSCANINFO:
+				if (src1 & 0x1)
+					s->regs[dest] = current_x;
+				else
+					s->regs[dest] = current_y;
 			break;
-			case VCP_READSCANPIXEL:
-				s->regs[dest] = current_x;
+
+			case VCP_UNUSED0:
+				// 
 			break;
+
 			case VCP_LOGICOP:
 			{
 				uint32_t v1 = s->regs[src1];
@@ -323,12 +333,14 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 					case 0x05: res = v1 << (v2 & 0x1F); break; /* SHL */
 					case 0x06: res = ~v1; break; /* NEG/NOT */
 					case 0x07: res = s->cmpreg; break; /* RCMP */
+					case 0x08: res = 0; break; /* RCTL - TODO: Read VPU control register */
 				}
 				s->regs[dest] = res;
 			}
 			break;
-			case VCP_LCTL:
-				/* TODO: Read VPU control register */
+			case VCP_UNUSED1:
+				break;
+			case VCP_UNUSED2:
 				break;
 		}
 
