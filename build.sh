@@ -2,8 +2,7 @@
 set -e
 
 if [ ! -f build/build.ninja ]; then
-    mkdir -p build
-    ./configure --target-list=arm-softmmu
+    ./configure --target-list=arm-softmmu --enable-slirp
 fi
 
 ninja -C build

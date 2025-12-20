@@ -1,0 +1,1 @@
+./qemu-img convert -f raw -O qcow2 -c extracted_sdcard.img sdcard.qcow2
