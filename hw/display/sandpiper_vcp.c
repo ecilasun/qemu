@@ -26,7 +26,7 @@
 #define VCP_STORE           0x09
 #define VCP_LOAD            0x0A
 #define VCP_READSCANINFO	0x0B
-#define VCP_UNUSED0			0x0C
+#define VCP_LOADPC			0x0C
 #define VCP_LOGICOP         0x0D
 #define VCP_UNUSED2			0x0E
 #define VCP_UNUSED1			0x0F
@@ -314,8 +314,9 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 					s->regs[dest] = current_y;
 			break;
 
-			case VCP_UNUSED0:
-				// 
+			case VCP_LOADPC:
+				// Store PC of next instruction in dest register
+				s->regs[dest] = (s->pc + 1) * 4;
 			break;
 
 			case VCP_LOGICOP:
