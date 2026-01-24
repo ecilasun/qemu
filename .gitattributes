@@ -6,4 +6,3 @@
 *.rs.inc        diff=rust
 Cargo.lock      diff=toml merge=binary
 *.patch         -text -whitespace
-*.qcow2 filter=lfs diff=lfs merge=lfs -text
