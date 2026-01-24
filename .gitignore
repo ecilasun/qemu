@@ -21,4 +21,4 @@ GTAGS
 *.patch
 *.gcov
 /bin/*.img
-/bin/*.qcow2
+
