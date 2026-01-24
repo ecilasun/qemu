@@ -7,3 +7,5 @@
 Cargo.lock      diff=toml merge=binary
 
 *.patch         -text -whitespace
+
+*.cow2 filter=lfs diff=lfs merge=lfs -text
