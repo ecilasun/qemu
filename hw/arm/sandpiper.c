@@ -217,9 +217,9 @@ static void sandpiper_init(MachineState *machine)
     int n;
     unsigned int smp_cpus = machine->smp.cpus;
 
-    /* max 2GB ram */
-    if (machine->ram_size > 2 * GiB) {
-        error_report("RAM size more than 2 GiB is not supported");
+    /* max 512MB ram */
+    if (machine->ram_size > 512 * MiB) {
+        error_report("RAM size more than 512 MiB is not supported");
         exit(EXIT_FAILURE);
     }
 
