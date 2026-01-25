@@ -41,6 +41,12 @@ echo "Copying files to bin..."
 cp "$BUILD_DIR/qemu-system-arm.exe" bin/
 cp "$BUILD_DIR/qemu-img.exe" bin/
 
+if [ -f "$BUILD_DIR/subprojects/slirp/libslirp-0.dll" ]; then
+    cp "$BUILD_DIR/subprojects/slirp/libslirp-0.dll" bin/
+elif [ -f "$BUILD_DIR/install/libslirp-0.dll" ]; then
+    cp "$BUILD_DIR/install/libslirp-0.dll" bin/
+fi
+
 if command -v "$STRIP_BIN" >/dev/null 2>&1; then
     "$STRIP_BIN" --strip-unneeded bin/qemu-system-arm.exe bin/qemu-img.exe
 fi
