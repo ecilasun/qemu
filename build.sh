@@ -2,7 +2,10 @@
 set -e
 
 if [ ! -f build/build.ninja ]; then
-    ./configure --target-list=arm-softmmu --enable-slirp
+    ./configure \
+	--target-list=arm-softmmu \
+	--enable-slirp \
+	--disable-werror
 fi
 
 ninja -C build
