@@ -1,6 +1,6 @@
 #include "qemu/osdep.h"
 #include "hw/audio/sandpiper_apu.h"
-#include "hw/qdev-properties.h"
+#include "hw/core/qdev-properties.h"
 #include "qemu/module.h"
 #include "qemu/log.h"
 #include "qemu/audio.h"

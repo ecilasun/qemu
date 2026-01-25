@@ -1,7 +1,7 @@
 #ifndef HW_AUDIO_SANDPIPER_APU_H
 #define HW_AUDIO_SANDPIPER_APU_H
 
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "qemu/audio.h"
 #include "qom/object.h"
 

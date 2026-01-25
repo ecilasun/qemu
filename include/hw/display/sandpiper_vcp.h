@@ -2,7 +2,7 @@
 #define HW_DISPLAY_SANDPIPER_VCP_H
 
 #include "qemu/osdep.h"
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "qom/object.h"
 
 #define TYPE_SANDPIPER_VCP "sandpiper-vcp"

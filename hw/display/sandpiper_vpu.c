@@ -26,13 +26,13 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "hw/display/sandpiper_vpu.h"
 #include "hw/display/sandpiper_vcp.h"
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
 #include "migration/vmstate.h"
-#include "hw/qdev-properties.h"
+#include "hw/core/qdev-properties.h"
 #include "system/address-spaces.h"
 
 /* VPU Commands */

@@ -1,7 +1,7 @@
 #ifndef HW_DISPLAY_SANDPIPER_VPU_H
 #define HW_DISPLAY_SANDPIPER_VPU_H
 
-#include "hw/sysbus.h"
+#include "hw/core/sysbus.h"
 #include "ui/console.h"
 
 #define TYPE_SANDPIPER_PALETTE "sandpiper-palette"
