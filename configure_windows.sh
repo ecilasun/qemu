@@ -1,0 +1,1 @@
+./configure --target-list=arm-softmmu --enable-slirp --enable-sdl --enable-gtk --enable-opengl --disable-werror
