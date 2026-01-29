@@ -71,6 +71,9 @@ static const int dma_irqs[8] = {
 
 #define BOARD_SETUP_ADDR        0x100
 
+#define SANDPIPER_FB_BASE        0x18000000
+#define SANDPIPER_FB_SIZE        0x96000
+
 #define SLCR_LOCK_OFFSET        0x004
 #define SLCR_UNLOCK_OFFSET      0x008
 #define SLCR_ARM_PLL_OFFSET     0x100
@@ -238,6 +241,16 @@ static void sandpiper_init(MachineState *machine)
 
     /* DDR remapped to address zero.  */
     memory_region_add_subregion(address_space_mem, 0, machine->ram);
+
+    /* Optional splash framebuffer (raw, RGB565 640x480) */
+    if (g_file_test("splash.bin", G_FILE_TEST_IS_REGULAR)) {
+        Error *local_err = NULL;
+
+        if (load_image_targphys("splash.bin", SANDPIPER_FB_BASE,
+                                SANDPIPER_FB_SIZE, &local_err) < 0) {
+            warn_report_err(local_err);
+        }
+    }
 
     /* 256K of on-chip memory */
     memory_region_init_ram(ocm_ram, NULL, "zynq.ocm_ram", 256 * KiB,
