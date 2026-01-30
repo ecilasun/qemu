@@ -38,6 +38,28 @@
 #define IMMED16(inst)       ((inst >> 16) & 0xFFFF)
 #define IMMED8(inst)        ((inst >> 24) & 0xFF)
 
+static void sandpiper_vcp_jit_compile(SandpiperVCPState *s)
+{
+	if (!s->jit_cache || s->jit_len == 0) {
+		return;
+	}
+
+	for (uint32_t i = 0; i < s->jit_len; i++) {
+		uint32_t inst = s->program_mem[i];
+		VCPDecodedInst *d = &s->jit_cache[i];
+		d->raw = inst;
+		d->opcode = inst & 0xF;
+		d->dest = DESTREG(inst);
+		d->src1 = SRCREG1(inst);
+		d->src2 = SRCREG2(inst);
+		d->imm24 = IMMED24(inst);
+		d->imm16 = IMMED16(inst);
+		d->imm8 = IMMED8(inst);
+	}
+
+	s->jit_valid = true;
+}
+
 static void sandpiper_vcp_reset(DeviceState *dev)
 {
     SandpiperVCPState *s = SANDPIPER_VCP(dev);
@@ -48,6 +70,7 @@ static void sandpiper_vcp_reset(DeviceState *dev)
     s->status = 0;
     s->cmd_state = VCP_STATE_IDLE;
     s->buffer_size = 0;
+	s->jit_valid = false;
 }
 
 static uint64_t sandpiper_vcp_read(void *opaque, hwaddr offset, unsigned size)
@@ -94,6 +117,7 @@ static void sandpiper_vcp_write(void *opaque, hwaddr offset, uint64_t val, unsig
                 len = sizeof(s->program_mem);
             }
             dma_memory_read(&address_space_memory, dma_addr, s->program_mem, len, MEMTXATTRS_UNSPECIFIED);
+			sandpiper_vcp_jit_compile(s);
             s->cmd_state = VCP_STATE_IDLE;
             return;
         }
@@ -146,6 +170,10 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
         return;
     }
 
+	if (!s->jit_valid) {
+		sandpiper_vcp_jit_compile(s);
+	}
+
     int instructions_executed = 0;
     const int MAX_INSTRUCTIONS = 1000; /* Prevent infinite loops */
 
@@ -191,15 +219,35 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 			return;
 		}
 
-		uint32_t inst = s->program_mem[s->pc];
-		uint32_t opcode = inst & 0xF;
-		
-		uint32_t dest = DESTREG(inst);
-		uint32_t src1 = SRCREG1(inst);
-		uint32_t src2 = SRCREG2(inst);
-		uint32_t imm24 = IMMED24(inst);
-		uint32_t imm16 = IMMED16(inst);
-		uint32_t imm8 = IMMED8(inst);
+		uint32_t inst;
+		uint32_t opcode;
+		uint32_t dest;
+		uint32_t src1;
+		uint32_t src2;
+		uint32_t imm24;
+		uint32_t imm16;
+		uint32_t imm8;
+
+		if (s->jit_valid && s->jit_cache && s->pc < s->jit_len) {
+			VCPDecodedInst *d = &s->jit_cache[s->pc];
+			inst = d->raw;
+			opcode = d->opcode;
+			dest = d->dest;
+			src1 = d->src1;
+			src2 = d->src2;
+			imm24 = d->imm24;
+			imm16 = d->imm16;
+			imm8 = d->imm8;
+		} else {
+			inst = s->program_mem[s->pc];
+			opcode = inst & 0xF;
+			dest = DESTREG(inst);
+			src1 = SRCREG1(inst);
+			src2 = SRCREG2(inst);
+			imm24 = IMMED24(inst);
+			imm16 = IMMED16(inst);
+			imm8 = IMMED8(inst);
+		}
 
 		switch (opcode) {
 			case VCP_NOOP:
@@ -279,7 +327,7 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 					if (dest & 0x1)
 					{
 						/* Branch to immediate */
-						s->pc = (s->pc + (signed int)imm16) / 4;
+						s->pc = (s->pc * 4 + (int32_t)(int16_t)imm16) / 4;
 					}
 					else
 					{
@@ -295,6 +343,12 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 					if (addr < (VCP_MEM_SIZE / 4))
 					{
 						s->program_mem[addr] = s->regs[src2];
+						if (s->jit_valid) {
+							s->jit_valid = false;
+							/* Self-modifying code: recompile on next run to keep sync */
+							s->pc++;
+							return;
+						}
 					}
 				}
 				break;
@@ -356,6 +410,10 @@ static void sandpiper_vcp_init(Object *obj)
     memory_region_init_io(&s->iomem, obj, &sandpiper_vcp_ops, s, "sandpiper-vcp", 0x1000);
     sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->iomem);
     sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq);
+
+	s->jit_len = VCP_MEM_SIZE / 4;
+	s->jit_cache = g_new0(VCPDecodedInst, s->jit_len);
+	s->jit_valid = false;
 }
 
 static void sandpiper_vcp_class_init(ObjectClass *klass, const void *data)
