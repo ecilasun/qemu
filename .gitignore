@@ -24,3 +24,4 @@ GTAGS
 /bin/*.img
 
 bin/sdcard.qcow2
+.DS_Store
