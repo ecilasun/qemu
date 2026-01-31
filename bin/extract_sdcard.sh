@@ -8,7 +8,7 @@ if [ -z "$1" ]; then
 fi
 
 INPUT_DEVICE="$1"
-OUT_FILE="extracted_sdcard.img"
+OUT_FILE="sdcard.iso"
 
 if [ ! -b "$INPUT_DEVICE" ]; then
     echo "Error: $INPUT_DEVICE is not a block device."
