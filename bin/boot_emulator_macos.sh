@@ -8,5 +8,5 @@
 	-append "console=ttyPS0,115200 root=/dev/mmcblk0p2 earlyprintk" \
 	-net nic \
 	-net user,hostfwd=tcp::2222-:22 \
+	-device usb-mouse,bus=usb-bus.0 \
 	-device usb-kbd,bus=usb-bus.1
-  
