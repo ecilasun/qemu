@@ -7,7 +7,7 @@ $QEMU = "$PSScriptRoot\build\qemu-system-arm.exe"
 $MACHINE = "sandpiper"
 $SD_IMG = "extracted_sdcard.img"
 $KERNEL = "zImage_h"
-$DTB = "system_h.dtb"
+$DTB = "system.dtb"
 
 # Check if SD image exists
 if (-not (Test-Path $SD_IMG)) {

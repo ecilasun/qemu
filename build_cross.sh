@@ -84,6 +84,6 @@ if [ -f zImage_h ]; then
     cp zImage_h bin/
 fi
 
-if [ -f system_h.dtb ]; then
-    cp system_h.dtb bin/
+if [ -f system.dtb ]; then
+    cp system.dtb bin/
 fi
