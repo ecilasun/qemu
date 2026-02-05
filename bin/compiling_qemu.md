@@ -13,7 +13,7 @@ pacman -Su --noconfirm
 Then install dependencies with:
 
 ```
-pacman -S --noconfirm base-devel mingw-w64-x86_64-toolchain git python ninja mingw-w64-x86_64-glib2 mingw-w64-x86_64-gtk3 mingw-w64-x86_64-SDL2 mingw-w64-x86_64-libslirp mingw-w64-x86_64-pixman mingw-w64-x86_64-libssh mingw-w64-x86_64-libnfs
+pacman -S --noconfirm base-devel mingw-w64-x86_64-toolchain git python ninja mingw-w64-x86_64-glib2 mingw-w64-x86_64-gtk3 mingw-w64-x86_64-SDL2 mingw-w64-x86_64-libslirp mingw-w64-x86_64-pixman mingw-w64-x86_64-libssh mingw-w64-x86_64-libnfs mingw-w64-x86_64-ntldd
 ```
 
 After this go to qemu root folder and use this to configure:
@@ -25,8 +25,9 @@ After this go to qemu root folder and use this to configure:
 Now we can build with the appropriate script depending on host platform:
 
 ```
-For MacOS / Linux (autodetects platform)
-./build.sh
-or for Windows, use:
-./build.bat
+./build_cross.sh
 ```
+
+which will auto-detect platform and build.
+
+Now you can use boot_emulator.bat /.sh or boot_emulator_macos.sh to run QEMU - sandpiper
