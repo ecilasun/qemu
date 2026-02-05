@@ -13,7 +13,7 @@ pacman -Su --noconfirm
 Then install dependencies with:
 
 ```
-pacman -S --noconfirm base-devel mingw-w64-x86_64-toolchain git python ninja mingw-w64-x86_64-glib2 mingw-w64-x86_64-gtk3 mingw-w64-x86_64-SDL2 mingw-w64-x86_64-libslirp mingw-w64-x86_64-pixman mingw-w64-ucrt-x86_64-libssh mingw-w64-ucrt-x86_64-libnfs
+pacman -S --noconfirm base-devel mingw-w64-x86_64-toolchain git python ninja mingw-w64-x86_64-glib2 mingw-w64-x86_64-gtk3 mingw-w64-x86_64-SDL2 mingw-w64-x86_64-libslirp mingw-w64-x86_64-pixman mingw-w64-x86_64-libssh mingw-w64-x86_64-libnfs
 ```
 
 After this go to qemu root folder and use this to configure:
