@@ -27,7 +27,12 @@ typedef struct SandpiperVPUState {
 
     uint32_t vpage;
     uint32_t second_buffer;
+    uint32_t vpage_b;
+    uint32_t second_buffer_b;
     uint32_t mode_flags;
+    uint8_t mixmode;
+    bool layerb_enable;
+    uint16_t keycolor;
     
     bool cmd_pending;
     uint8_t pending_cmd_opcode;
@@ -35,6 +40,7 @@ typedef struct SandpiperVPUState {
     QEMUTimer *vsync_timer;
     bool vblank_toggle;
     bool swap_pending;
+    bool swap_pending_b;
 
     uint32_t fifo[1024];
     int fifo_head;

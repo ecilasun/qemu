@@ -45,12 +45,106 @@
 #define CMD_SETSECONDBUFFER 0x06
 #define CMD_SYNCSWAP        0x07
 #define CMD_WCONTROLREG     0x08
+#define CMD_SETVPAGE_B      0x09
+#define CMD_SETSECONDBUFFER_B 0x0A
+#define CMD_SYNCSWAP_B      0x0B
+#define CMD_SETMIXMODE      0x0C
 
 /* VMODE Flags */
 #define VMODE_SCAN_ENABLE   (1 << 0)
 #define VMODE_WIDTH_640     (1 << 1)
 #define VMODE_DEPTH_16BPP   (1 << 2)
 #define VMODE_SCAN_DOUBLE   (1 << 3)
+
+static inline uint16_t sandpiper_rgb565_blend_50_50(uint16_t a, uint16_t b)
+{
+    uint8_t ra = (a >> 11) & 0x1F;
+    uint8_t ga = (a >> 5) & 0x3F;
+    uint8_t ba = a & 0x1F;
+    uint8_t rb = (b >> 11) & 0x1F;
+    uint8_t gb = (b >> 5) & 0x3F;
+    uint8_t bb = b & 0x1F;
+
+    uint8_t r = (ra + rb) >> 1;
+    uint8_t g = (ga + gb) >> 1;
+    uint8_t bch = (ba + bb) >> 1;
+
+    return (uint16_t)((r << 11) | (g << 5) | bch);
+}
+
+static inline uint16_t sandpiper_rgb565_blend_75_25(uint16_t a, uint16_t b)
+{
+    uint8_t ra = (a >> 11) & 0x1F;
+    uint8_t ga = (a >> 5) & 0x3F;
+    uint8_t ba = a & 0x1F;
+    uint8_t rb = (b >> 11) & 0x1F;
+    uint8_t gb = (b >> 5) & 0x3F;
+    uint8_t bb = b & 0x1F;
+
+    uint8_t r = (uint8_t)((ra * 3 + rb) >> 2);
+    uint8_t g = (uint8_t)((ga * 3 + gb) >> 2);
+    uint8_t bch = (uint8_t)((ba * 3 + bb) >> 2);
+
+    return (uint16_t)((r << 11) | (g << 5) | bch);
+}
+
+static inline uint16_t sandpiper_rgb565_blend_25_75(uint16_t a, uint16_t b)
+{
+    uint8_t ra = (a >> 11) & 0x1F;
+    uint8_t ga = (a >> 5) & 0x3F;
+    uint8_t ba = a & 0x1F;
+    uint8_t rb = (b >> 11) & 0x1F;
+    uint8_t gb = (b >> 5) & 0x3F;
+    uint8_t bb = b & 0x1F;
+
+    uint8_t r = (uint8_t)((ra + rb * 3) >> 2);
+    uint8_t g = (uint8_t)((ga + gb * 3) >> 2);
+    uint8_t bch = (uint8_t)((ba + bb * 3) >> 2);
+
+    return (uint16_t)((r << 11) | (g << 5) | bch);
+}
+
+static inline uint16_t sandpiper_rgb565_add_saturate(uint16_t a, uint16_t b)
+{
+    uint8_t ra = (a >> 11) & 0x1F;
+    uint8_t ga = (a >> 5) & 0x3F;
+    uint8_t ba = a & 0x1F;
+    uint8_t rb = (b >> 11) & 0x1F;
+    uint8_t gb = (b >> 5) & 0x3F;
+    uint8_t bb = b & 0x1F;
+
+    uint8_t r = (ra + rb) > 0x1F ? 0x1F : (ra + rb);
+    uint8_t g = (ga + gb) > 0x3F ? 0x3F : (ga + gb);
+    uint8_t bch = (ba + bb) > 0x1F ? 0x1F : (ba + bb);
+
+    return (uint16_t)((r << 11) | (g << 5) | bch);
+}
+
+static inline uint16_t sandpiper_rgb565_mix(uint16_t a, uint16_t b,
+                                            uint8_t mixmode, uint16_t keycolor)
+{
+    switch (mixmode) {
+    case 0:
+        return sandpiper_rgb565_blend_75_25(a, b);
+    case 1:
+        return (b == keycolor) ? a : b;
+    case 2:
+        return sandpiper_rgb565_blend_50_50(a, b);
+    case 3:
+        return sandpiper_rgb565_add_saturate(a, b);
+    case 4:
+        return sandpiper_rgb565_blend_25_75(a, b);
+    default:
+        return a;
+    }
+}
+
+static inline void sandpiper_vpu_swap_buffers(uint32_t *front, uint32_t *back)
+{
+    uint32_t tmp = *front;
+    *front = *back;
+    *back = tmp;
+}
 
 /* Palette Module */
 
@@ -116,7 +210,7 @@ static const TypeInfo sandpiper_palette_info = {
 static void sandpiper_vpu_process_commands(SandpiperVPUState *s)
 {
     while (s->fifo_count > 0) {
-        if (s->swap_pending) {
+        if (s->swap_pending || s->swap_pending_b) {
             /* Stall processing until VSYNC */
             break;
         }
@@ -136,6 +230,12 @@ static void sandpiper_vpu_process_commands(SandpiperVPUState *s)
                 break;
             case CMD_SETSECONDBUFFER:
                 s->second_buffer = cmd_word;
+                break;
+            case CMD_SETVPAGE_B:
+                s->vpage_b = cmd_word;
+                break;
+            case CMD_SETSECONDBUFFER_B:
+                s->second_buffer_b = cmd_word;
                 break;
             case CMD_SHIFTSCANOUT:
                 s->shift_scanout = cmd_word;
@@ -163,12 +263,30 @@ static void sandpiper_vpu_process_commands(SandpiperVPUState *s)
         case CMD_SHIFTCACHE:
         case CMD_SHIFTSCANOUT:
         case CMD_SHIFTPIXEL:
+        case CMD_SETVPAGE_B:
+        case CMD_SETSECONDBUFFER_B:
             s->pending_cmd_opcode = opcode;
             s->cmd_pending = true;
             break;
         case CMD_SYNCSWAP:
             /* Swap buffers at next VBLANK */
-            s->swap_pending = true;
+            if (cmd_word & (1 << 8)) {
+                sandpiper_vpu_swap_buffers(&s->vpage, &s->second_buffer);
+            } else {
+                s->swap_pending = true;
+            }
+            break;
+        case CMD_SYNCSWAP_B:
+            if (cmd_word & (1 << 8)) {
+                sandpiper_vpu_swap_buffers(&s->vpage_b, &s->second_buffer_b);
+            } else {
+                s->swap_pending_b = true;
+            }
+            break;
+        case CMD_SETMIXMODE:
+            s->layerb_enable = (cmd_word >> 8) & 0x1;
+            s->mixmode = (cmd_word >> 9) & 0x7;
+            s->keycolor = (cmd_word >> 12) & 0xFFFF;
             break;
         case CMD_WCONTROLREG:
             /* Handle control reg */
@@ -187,10 +305,13 @@ static void sandpiper_vpu_vsync_timer_cb(void *opaque)
     s->vblank_toggle = !s->vblank_toggle;
 
     if (s->swap_pending) {
-        uint32_t tmp = s->vpage;
-        s->vpage = s->second_buffer;
-        s->second_buffer = tmp;
+        sandpiper_vpu_swap_buffers(&s->vpage, &s->second_buffer);
         s->swap_pending = false;
+    }
+
+    if (s->swap_pending_b) {
+        sandpiper_vpu_swap_buffers(&s->vpage_b, &s->second_buffer_b);
+        s->swap_pending_b = false;
     }
 
     /* Resume processing commands (e.g. barrier) */
@@ -206,6 +327,7 @@ static void sandpiper_vpu_update_display(void *opaque)
     uint32_t *dest;
     uint8_t *src;
     uint16_t *src16;
+    uint16_t *src16_b = NULL;
     int fb_width, fb_height;
     int scan_width = 640;
     int scan_height = 480;
@@ -213,8 +335,11 @@ static void sandpiper_vpu_update_display(void *opaque)
     int stride;
     int y, x;
     hwaddr vpage_phys;
+    hwaddr vpage_b_phys;
     MemoryRegion *mr;
+    MemoryRegion *mr_b;
     void *vram_ptr;
+    void *vram_ptr_b = NULL;
     hwaddr len;
     int src_stride;
 
@@ -255,6 +380,17 @@ static void sandpiper_vpu_update_display(void *opaque)
     vram_ptr = qemu_map_ram_ptr(mr->ram_block, vpage_phys);
     if (!vram_ptr) {
         return;
+    }
+
+    vpage_b_phys = s->vpage_b;
+    if (s->layerb_enable && bpp == 16 && vpage_b_phys != 0) {
+        len = src_stride * fb_height;
+        mr_b = address_space_translate(&address_space_memory, vpage_b_phys,
+                                       &vpage_b_phys, &len, false,
+                                       MEMTXATTRS_UNSPECIFIED);
+        if (mr_b && memory_region_is_ram(mr_b)) {
+            vram_ptr_b = qemu_map_ram_ptr(mr_b->ram_block, vpage_b_phys);
+        }
     }
 
     dest = (uint32_t *)surface_data(surface);
@@ -299,6 +435,9 @@ static void sandpiper_vpu_update_display(void *opaque)
     } else {
         /* 16bpp (RGB565) */
         src16 = (uint16_t *)((uint8_t *)vram_ptr + offset);
+        if (vram_ptr_b) {
+            src16_b = (uint16_t *)((uint8_t *)vram_ptr_b + offset);
+        }
         for (y = 0; y < scan_height; y++) {
             int fb_y = (s->mode_flags & VMODE_SCAN_DOUBLE) ? y >> 1 : y;
             for (x = 0; x < scan_width; x++) {
@@ -306,7 +445,13 @@ static void sandpiper_vpu_update_display(void *opaque)
                     sandpiper_vcp_run(s->vcp, y, x);
                 }
                 int fb_x = (s->mode_flags & VMODE_WIDTH_640) ? x : x >> 1;
-                uint16_t pixel = src16[fb_y * fb_width + fb_x];
+                uint16_t pixel_a = src16[fb_y * fb_width + fb_x];
+                uint16_t pixel_b = src16_b ? src16_b[fb_y * fb_width + fb_x] : 0;
+                uint16_t pixel = pixel_a;
+                if (s->layerb_enable && src16_b) {
+                    pixel = sandpiper_rgb565_mix(pixel_a, pixel_b,
+                                                 s->mixmode, s->keycolor);
+                }
                 /* Convert RGB565 to RGB888 */
                 uint8_t r = (pixel >> 11) & 0x1F;
                 uint8_t g = (pixel >> 5) & 0x3F;
@@ -423,11 +568,17 @@ static void sandpiper_vpu_reset(DeviceState *dev)
     s->pending_cmd_opcode = 0;
     s->vblank_toggle = false;
     s->swap_pending = false;
+    s->swap_pending_b = false;
     s->fifo_head = 0;
     s->fifo_tail = 0;
     s->fifo_count = 0;
     s->shift_scanout = 0;
     s->shift_pixel = 0;
+    s->vpage_b = 0x18000000;
+    s->second_buffer_b = 0;
+    s->layerb_enable = false;
+    s->mixmode = 0;
+    s->keycolor = 0;
     timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME));
 }
 
