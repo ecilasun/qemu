@@ -1,11 +1,11 @@
 ./qemu-system-arm \
 	-M sandpiper \
 	-m 512M \
-	-serial tcp::5555,server,nowait \
+	-serial stdio \
 	-drive file=sdcard.qcow2,if=sd,format=qcow2 \
 	-kernel zImage_h \
 	-dtb system.dtb \
-	-append "console=ttyPS0,115200 root=/dev/mmcblk0p2 earlyprintk" \
+	-append "console=ttyPS0,115200 root=/dev/mmcblk0p2 rootwait earlyprintk" \
 	-net nic \
 	-net user,hostfwd=tcp::2222-:22 \
 	-device usb-mouse,bus=usb-bus.0 \
