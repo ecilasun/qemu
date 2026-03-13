@@ -33,6 +33,7 @@ typedef struct SandpiperVPUState {
     uint8_t mixmode;
     bool layerb_enable;
     uint16_t keycolor;
+    uint8_t control_register;
     
     bool cmd_pending;
     uint8_t pending_cmd_opcode;

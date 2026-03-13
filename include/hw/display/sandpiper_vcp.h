@@ -47,7 +47,8 @@ typedef struct SandpiperVCPState {
     uint32_t buffer_size;
 
     /* Execution State */
-    bool running;
+    bool running;  /* execstate[0]: execution enabled by VCP_CMD_EXEC */
+    bool halted;   /* runstate: VCP core naturally halted (program end/illegal op) */
     bool waiting;
     uint32_t wait_line;
     uint32_t wait_pixel;

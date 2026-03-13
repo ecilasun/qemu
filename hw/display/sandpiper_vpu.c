@@ -289,7 +289,7 @@ static void sandpiper_vpu_process_commands(SandpiperVPUState *s)
             s->keycolor = (cmd_word >> 12) & 0xFFFF;
             break;
         case CMD_WCONTROLREG:
-            /* Handle control reg */
+            s->control_register = (cmd_word >> 8) & 0xFF;
             break;
         case CMD_FINALIZE:
         default:
@@ -579,6 +579,7 @@ static void sandpiper_vpu_reset(DeviceState *dev)
     s->layerb_enable = false;
     s->mixmode = 0;
     s->keycolor = 0;
+    s->control_register = 0;
     timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME));
 }
 

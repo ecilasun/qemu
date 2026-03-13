@@ -28,8 +28,8 @@
 #define VCP_READSCANINFO	0x0B
 #define VCP_LOADPC			0x0C
 #define VCP_LOGICOP         0x0D
-#define VCP_UNUSED2			0x0E
-#define VCP_UNUSED1			0x0F
+#define VCP_SYSMEM_WRITE	0x0E
+#define VCP_SYSMEM_READ		0x0F
 
 #define DESTREG(inst)       ((inst >> 4) & 0xF)
 #define SRCREG1(inst)       ((inst >> 8) & 0xF)
@@ -66,6 +66,7 @@ static void sandpiper_vcp_reset(DeviceState *dev)
     memset(s->regs, 0, sizeof(s->regs));
     s->pc = 0;
     s->running = false;
+    s->halted = false;
     s->waiting = false;
     s->status = 0;
     s->cmd_state = VCP_STATE_IDLE;
@@ -89,9 +90,15 @@ static uint64_t sandpiper_vcp_read(void *opaque, hwaddr offset, unsigned size)
          * debugopcode = (stat >> 24) & 0xF
          */
         {
+            /* vcpstate = { debugopcode[27:24], 0[23], copystate[22], ~fifoempty[21],
+             *              pc[20:8], runstate[7:4], execstate[3:0] }
+             * runstate: 0x3=EXEC (actively running), 0xC=HALT (ended or stopped)
+             */
+            uint32_t runstate = (!s->running || s->halted) ? 0xC : 0x3;
             uint32_t stat = 0;
-            stat |= (s->running ? 1 : 0); // Simple run state
-            stat |= (s->pc & 0x1FFF) << 8;
+            stat |= (s->running ? 1 : 0);        /* execstate[0] */
+            stat |= (runstate & 0xF) << 4;        /* runstate      */
+            stat |= (s->pc & 0x1FFF) << 8;        /* PC            */
             return stat;
         }
     default:
@@ -107,7 +114,11 @@ static void sandpiper_vcp_write(void *opaque, hwaddr offset, uint64_t val, unsig
     switch (offset) {
     case 0x00: /* Command / Data */
         if (s->cmd_state == VCP_STATE_WAIT_BUFFER_SIZE) {
-            s->buffer_size = val;
+            /* Parameter is a 3-bit size code, matching vcpcore.sv VCPBUFFERSIZE */
+            static const uint32_t size_table[8] = {
+                128, 256, 512, 1024, 2048, 4096, 0, 0
+            };
+            s->buffer_size = size_table[val & 0x7];
             s->cmd_state = VCP_STATE_IDLE;
             return;
         } else if (s->cmd_state == VCP_STATE_WAIT_DMA_ADDR) {
@@ -136,7 +147,11 @@ static void sandpiper_vcp_write(void *opaque, hwaddr offset, uint64_t val, unsig
 				case VCP_CMD_EXEC:
 					s->running = flags & 0x1 ? true : false;
 					s->waiting = false;
+				if (flags & 0x1) {
+					/* Start: clear halted state and rewind to PC=0 */
+					s->halted = false;
 					s->pc = 0;
+				}
 				break;
             }
         }
@@ -166,7 +181,7 @@ void sandpiper_vcp_reset_frame(SandpiperVCPState *s)
 
 void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t current_x)
 {
-    if (!s->running) {
+    if (!s->running || s->halted) {
         return;
     }
 
@@ -184,17 +199,14 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 			bool condition_met = false;
 			if (s->wait_line != -1)
 			{
-				if (current_y >= s->wait_line)
+				if (current_y == s->wait_line)
 				{
 					condition_met = true;
 				}
 			}
 			else if (s->wait_pixel != -1)
 			{
-				/* Wait for pixel on current line? Or absolute pixel? */
-				/* Usually wait pixel is on the current line. */
-				/* If we are on the same line and x >= wait_pixel */
-				if (current_x >= s->wait_pixel)
+				if (current_x == s->wait_pixel)
 				{
 					condition_met = true;
 				}
@@ -215,7 +227,11 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 
 		if (s->pc >= (VCP_MEM_SIZE / 4))
 		{
-			s->running = false;
+			/* PC ran off end of program memory: enter HALT state.
+			 * Keep running=true (execstate[0] stays 1, matching hardware);
+			 * the ELF must send VCP_CMD_EXEC(flags=0) to fully stop. */
+			s->halted = true;
+			s->pc = 0;
 			return;
 		}
 
@@ -261,7 +277,7 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 				if (s->vpu && s->vpu->palette)
 				{
 					uint32_t addr = s->regs[src1] & 0xFF;
-					uint32_t val = s->regs[src2];
+					uint32_t val = s->regs[src2] & 0xFFFFFF;
 					s->vpu->palette->palette[addr] = val;
 				}
 			}
@@ -295,8 +311,9 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 			case VCP_JUMP:
 				if (dest & 0x1)
 				{
-					/* Jump to immediate */
-					s->pc = (s->pc * 4 + (int32_t)(int16_t)imm16) / 4;
+					/* Relative jump: 13-bit signed byte offset in imm16[12:0] */
+					int32_t offset = (int32_t)((imm16 & 0x1FFF) << 19) >> 19;
+					s->pc = ((int32_t)(s->pc * 4) + offset) / 4;
 				}
 				else
 				{
@@ -326,8 +343,9 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 				{
 					if (dest & 0x1)
 					{
-						/* Branch to immediate */
-						s->pc = (s->pc * 4 + (int32_t)(int16_t)imm16) / 4;
+						/* Relative branch: 13-bit signed byte offset in imm16[12:0] */
+						int32_t offset = (int32_t)((imm16 & 0x1FFF) << 19) >> 19;
+						s->pc = ((int32_t)(s->pc * 4) + offset) / 4;
 					}
 					else
 					{
@@ -339,7 +357,7 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 			break;
 			case VCP_STORE:
 				{
-					uint32_t addr = s->regs[src1] / 4;
+					uint32_t addr = (s->regs[src1] & 0x1FFF) / 4;
 					if (addr < (VCP_MEM_SIZE / 4))
 					{
 						s->program_mem[addr] = s->regs[src2];
@@ -354,7 +372,7 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 				break;
 			case VCP_LOAD:
 				{
-					uint32_t addr = s->regs[src1] / 4;
+					uint32_t addr = (s->regs[src1] & 0x1FFF) / 4;
 					if (addr < (VCP_MEM_SIZE / 4))
 					{
 						s->regs[dest] = s->program_mem[addr];
@@ -363,9 +381,9 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 				break;
 			case VCP_READSCANINFO:
 				if (src1 & 0x1)
-					s->regs[dest] = current_x;
+					s->regs[dest] = current_x & 0x3FF;
 				else
-					s->regs[dest] = current_y;
+					s->regs[dest] = current_y & 0x3FF;
 			break;
 
 			case VCP_LOADPC:
@@ -388,15 +406,32 @@ void sandpiper_vcp_run(SandpiperVCPState *s, uint32_t current_y, uint32_t curren
 					case 0x05: res = v1 << (v2 & 0x1F); break; /* SHL */
 					case 0x06: res = ~v1; break; /* NEG/NOT */
 					case 0x07: res = s->cmpreg; break; /* RCMP */
-					case 0x08: res = 0; break; /* RCTL - TODO: Read VPU control register */
+					case 0x08: res = s->vpu ? s->vpu->control_register : 0; break; /* RCTL */
 				}
 				s->regs[dest] = res;
 			}
 			break;
-			case VCP_UNUSED1:
+			case VCP_SYSMEM_WRITE:
+				{
+					uint32_t addr = s->regs[src1];
+					uint32_t val  = s->regs[src2];
+					dma_memory_write(&address_space_memory, addr, &val, 4,
+					                 MEMTXATTRS_UNSPECIFIED);
+				}
 				break;
-			case VCP_UNUSED2:
+			case VCP_SYSMEM_READ:
+				{
+					uint32_t addr = s->regs[src1];
+					uint32_t val  = 0;
+					dma_memory_read(&address_space_memory, addr, &val, 4,
+					                MEMTXATTRS_UNSPECIFIED);
+					s->regs[dest] = val;
+				}
 				break;
+			default:
+				/* Illegal opcode: halt the VCP core, matching RTL behaviour */
+				s->halted = true;
+				return;
 		}
 
 		s->pc++;
