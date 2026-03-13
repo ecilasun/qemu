@@ -15,7 +15,7 @@ echo "Copying files to bin..."
 if [ -f build/qemu-system-arm.exe ]; then
 	cp build/qemu-system-arm.exe bin/
 else
-	cp build/qemu-system-arm bin/
+	cp build/qemu-system-arm-unsigned bin/
 fi
 if [ -f build/qemu-img.exe ]; then
 	cp build/qemu-img.exe bin/
