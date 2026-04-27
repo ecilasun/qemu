@@ -25,3 +25,5 @@ GTAGS
 
 bin/sdcard.qcow2
 .DS_Store
+bin/sdcard_for_device.7z
+bin/sdcard.iso
