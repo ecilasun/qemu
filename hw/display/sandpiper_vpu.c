@@ -146,6 +146,11 @@ static inline void sandpiper_vpu_swap_buffers(uint32_t *front, uint32_t *back)
     *back = tmp;
 }
 
+static inline int64_t sandpiper_vpu_vsync_period_ns(void)
+{
+    return NANOSECONDS_PER_SECOND / 60;
+}
+
 /* Palette Module */
 
 static uint64_t sandpiper_palette_read(void *opaque, hwaddr offset,
@@ -301,6 +306,8 @@ static void sandpiper_vpu_process_commands(SandpiperVPUState *s)
 static void sandpiper_vpu_vsync_timer_cb(void *opaque)
 {
     SandpiperVPUState *s = SANDPIPER_VPU(opaque);
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    int64_t period = sandpiper_vpu_vsync_period_ns();
 
     s->vblank_toggle = !s->vblank_toggle;
 
@@ -317,7 +324,19 @@ static void sandpiper_vpu_vsync_timer_cb(void *opaque)
     /* Resume processing commands (e.g. barrier) */
     sandpiper_vpu_process_commands(s);
 
-    timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME) + NANOSECONDS_PER_SECOND / 60);
+    if (s->mode_flags & VMODE_SCAN_ENABLE) {
+        graphic_hw_update(s->con);
+    }
+
+    if (s->next_vsync_ns == 0) {
+        s->next_vsync_ns = now + period;
+    } else {
+        do {
+            s->next_vsync_ns += period;
+        } while (s->next_vsync_ns <= now);
+    }
+
+    timer_mod(s->vsync_timer, s->next_vsync_ns);
 }
 
 static void sandpiper_vpu_update_display(void *opaque)
@@ -424,13 +443,10 @@ static void sandpiper_vpu_update_display(void *opaque)
 
         /* Simulate VBLANK lines (lines 480-524) */
         for (y = scan_height; y < scan_height + 45; y++) {
-             if (s->vcp) {
-                 /* Run VCP for the whole line duration or just once per line? 
-                    Hardware likely runs it continuously or at least once. 
-                    Let's run it once per line with x=0 and x=scan_width to simulate start/end */
-                 sandpiper_vcp_run(s->vcp, y, 0);
-                 sandpiper_vcp_run(s->vcp, y, scan_width);
-             }
+            if (s->vcp) {
+                sandpiper_vcp_run(s->vcp, y, 0);
+                sandpiper_vcp_run(s->vcp, y, scan_width);
+            }
         }
     } else {
         /* 16bpp (RGB565) */
@@ -468,10 +484,10 @@ static void sandpiper_vpu_update_display(void *opaque)
 
         /* Simulate VBLANK lines (lines 480-524) */
         for (y = scan_height; y < scan_height + 45; y++) {
-             if (s->vcp) {
-                 sandpiper_vcp_run(s->vcp, y, 0);
-                 sandpiper_vcp_run(s->vcp, y, scan_width);
-             }
+            if (s->vcp) {
+                sandpiper_vcp_run(s->vcp, y, 0);
+                sandpiper_vcp_run(s->vcp, y, scan_width);
+            }
         }
     }
 
@@ -548,7 +564,9 @@ static void sandpiper_vpu_realize(DeviceState *dev, Error **errp)
     SandpiperVPUState *s = SANDPIPER_VPU(dev);
 
     s->con = graphic_console_init(dev, 0, &sandpiper_vpu_gfx_ops, s);
-    s->vsync_timer = timer_new_ns(QEMU_CLOCK_REALTIME, sandpiper_vpu_vsync_timer_cb, s);
+    s->vsync_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+                                  sandpiper_vpu_vsync_timer_cb, s);
+    s->next_vsync_ns = 0;
 }
 
 static const Property sandpiper_vpu_properties[] = {
@@ -566,6 +584,7 @@ static void sandpiper_vpu_reset(DeviceState *dev)
     s->second_buffer = 0;
     s->cmd_pending = false;
     s->pending_cmd_opcode = 0;
+    s->next_vsync_ns = 0;
     s->vblank_toggle = false;
     s->swap_pending = false;
     s->swap_pending_b = false;
@@ -580,7 +599,9 @@ static void sandpiper_vpu_reset(DeviceState *dev)
     s->mixmode = 0;
     s->keycolor = 0;
     s->control_register = 0;
-    timer_mod(s->vsync_timer, qemu_clock_get_ns(QEMU_CLOCK_REALTIME));
+    s->next_vsync_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                       sandpiper_vpu_vsync_period_ns();
+    timer_mod(s->vsync_timer, s->next_vsync_ns);
 }
 
 static void sandpiper_vpu_class_init(ObjectClass *klass, const void *data)

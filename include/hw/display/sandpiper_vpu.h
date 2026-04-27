@@ -39,6 +39,7 @@ typedef struct SandpiperVPUState {
     uint8_t pending_cmd_opcode;
 
     QEMUTimer *vsync_timer;
+    int64_t next_vsync_ns;
     bool vblank_toggle;
     bool swap_pending;
     bool swap_pending_b;
